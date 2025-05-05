@@ -3,4 +3,21 @@ name = "eventsourcingdb-client-rust"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+testcontainer = ["dep:testcontainers"]
+
 [dependencies]
+reqwest = "0.12.15"
+thiserror = "2.0.12"
+url = "2.5.4"
+testcontainers = { version = "0.24.0", features = ["http_wait"], optional = true }
+cloudevents-sdk = { version = "0.8.0", features = ["reqwest"] }
+
+[dev-dependencies]
+testcontainers = "0.24.0"
+tokio = { version = "1.44.2", features = ["full"] }
+
+[dev-dependencies.eventsourcingdb-client-rust]
+features = ["testcontainer"]
+path = "."
