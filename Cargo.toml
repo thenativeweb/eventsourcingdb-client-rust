@@ -3,4 +3,17 @@ name = "eventsourcingdb-client-rust"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+testcontainer = ["dep:testcontainers"]
+
 [dependencies]
+thiserror = "2.0.12"
+url = "2.5.4"
+testcontainers = { version = "0.24.0", features = ["http_wait"], optional = true }
+
+[dev-dependencies]
+eventsourcingdb-client-rust = {path = ".", features = ["testcontainer"]}
+reqwest = "0.12.15"
+testcontainers = { version = "0.24.0", features = ["http_wait"] }
+tokio = { version = "1.44.2", features = ["full"] }
