@@ -17,3 +17,8 @@ eventsourcingdb-client-rust = {path = ".", features = ["testcontainer"]}
 reqwest = "0.12.15"
 testcontainers = { version = "0.24.0", features = ["http_wait"] }
 tokio = { version = "1.44.2", features = ["full"] }
+tokio-test = "0.4.4"
+
+# This is metadata required for working docs on docs.rs
+[package.metadata.docs.rs]
+features = ["testcontainer"]

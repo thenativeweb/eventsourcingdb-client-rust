@@ -1,7 +1,38 @@
 //! This module holds the optional testcontainer utility functions of the SDK.
 //!
-//! It uses the [testcontainers](https://docs.rs/testcontainers/latest/testcontainers/) crate to start a test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
+//! It uses the [testcontainers] crate to start a test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
+//!
 //! It uses the builder pattern to configure the container and start it.
+//!
+//! # How to use
+//!
+//! ## Shortcut suitable for most use cases
+//! This starts a container with the default settings which is most likely what you want.
+//! ```
+//! # use eventsourcingdb_client_rust::container::Container;
+//! # tokio_test::block_on(async {
+//! let container = Container::start_default().await;
+//! // let client = container.get_client().await;
+//! # });
+//! ```
+//!
+//! ## Custom configuration
+//! This allows you to configure the container to your needs.
+//! ```
+//! # use eventsourcingdb_client_rust::container::Container;
+//! # tokio_test::block_on(async {
+//! let container = Container::builder()
+//!     .with_image_tag("v1.0.0")
+//!     .with_port(3000)
+//!     .with_api_token("mysecrettoken")
+//!     .start().await;
+//! // let client = container.get_client().await;
+//! # });
+//! ```
+//!
+//! ## Stopping the container
+//! The container will be stopped automatically when it is dropped.
+//! You can also stop it manually by calling the [Container::stop] method.
 use testcontainers::{
     ContainerAsync, GenericImage,
     core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
@@ -11,8 +42,20 @@ use url::{Host, Url};
 
 use crate::error::ContainerError;
 
-/// Builder for the test container
-/// You should not use this directly, but use the `Container::builder()` method instead.
+/// Builder for the [Container].
+///
+/// **You should not use this directly**, but use the [Container::builder] method instead.
+///
+/// By default this container is the same as running this:
+/// ```
+/// # use eventsourcingdb_client_rust::container::Container;
+/// # tokio_test::block_on(async {
+/// let builder = Container::builder()
+///     .with_image_tag("latest")
+///     .with_port(3000)
+///     .with_api_token("secret");
+/// # });
+/// ```
 #[derive(Debug, Clone)]
 pub struct ContainerBuilder {
     image_name: String,
@@ -33,33 +76,40 @@ impl Default for ContainerBuilder {
 }
 
 impl ContainerBuilder {
-    /// Set the image tag to use for the container#
+    /// Set the image tag to use for the container.
     #[must_use]
     pub fn with_image_tag(mut self, tag: &str) -> Self {
         self.image_tag = tag.to_string();
         self
     }
 
-    /// Set the API token to use for the container
+    /// Set the API token to use for the container.
     #[must_use]
     pub fn with_api_token(mut self, token: &str) -> Self {
         self.api_token = token.to_string();
         self
     }
 
-    /// Set the port to use for the container
+    /// Set the port to use for the container.
+    ///
+    /// This is the port that will be exposed from the container to the host.
+    /// It will be mapped to a random port on the host that you can connect to.
+    /// To find that port, use the [Container::get_mapped_port] method.
     #[must_use]
     pub fn with_port(mut self, port: impl Into<ContainerPort>) -> Self {
         self.internal_port = port.into();
         self
     }
 
-    /// Start the test container
+    /// Start the test container.
     ///
     /// This call will transform the builder into a running container.
+    /// It takes care of starting the container and waiting for it to be ready by waiting for the
+    /// [ping](https://docs.eventsourcingdb.io/reference/api-overview/#authentication)
+    /// endpoint to respond since that doesn't require authentication.
     ///
     /// # Errors
-    /// This function will return an error if the container could not be started
+    /// This function will return an error if the container could not be started.
     pub async fn start(self) -> Result<Container, ContainerError> {
         Ok(Container {
             internal_port: self.internal_port,
@@ -86,7 +136,20 @@ impl ContainerBuilder {
     }
 }
 
-/// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/)
+/// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
+/// 
+/// Aside from managing the container, this struct also provides methods to get the data needed to connect to
+/// the database or even a fully configured client.
+/// 
+/// You'll most likely want to use the [Container::start_default] method to create a new container instance for your tests.
+/// For more details, see the [crate::container] module documentation.
+/// ```
+/// # use eventsourcingdb_client_rust::container::Container;
+/// # tokio_test::block_on(async {
+/// let container = Container::start_default().await;
+/// // let client = container.get_client().await;
+/// # });
+/// ```
 #[derive(Debug)]
 pub struct Container {
     container: ContainerAsync<GenericImage>,
@@ -95,13 +158,18 @@ pub struct Container {
 }
 
 impl Container {
-    /// Create a new container builder instance to configure the container
+    /// Create a new container builder instance to configure the container.
+    /// The returned builder starts with the default settings and is the same as calling [ContainerBuilder::default].
+    /// This is the recommended way to create a new [ContainerBuilder] instance.
     #[must_use]
     pub fn builder() -> ContainerBuilder {
         ContainerBuilder::default()
     }
 
-    /// Shortcut method to start the container with default settings
+    /// Shortcut method to start the container with default settings.
+    /// 
+    /// This is the same as calling [Container::builder] and then [ContainerBuilder::start].
+    /// In most cases this will create a contaienr with the latest image tag and a working configuration.
     ///
     /// # Errors
     /// This functions returns the errors of `ContainerBuilder::start()`
@@ -109,7 +177,9 @@ impl Container {
         Self::builder().start().await
     }
 
-    /// Get the host of the container
+    /// Get the host of the container.
+    /// 
+    /// This is the host that you can use to connect to the database. In most cases this will be `localhost`.
     ///
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
@@ -117,7 +187,9 @@ impl Container {
         Ok(self.container.get_host().await?)
     }
 
-    /// Get the mapped port for the database
+    /// Get the mapped port for the database.
+    /// 
+    /// This is the port that you can use to connect to the database. This will be a random port that is mapped to the internal port configured via [ContainerBuilder::with_port].
     ///
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
@@ -128,7 +200,7 @@ impl Container {
             .await?)
     }
 
-    /// Get the complete base URL for the database
+    /// Get the complete http base URL for the database.
     ///
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
@@ -138,7 +210,7 @@ impl Container {
         Ok(Url::parse(&format!("http://{host}:{port}"))?)
     }
 
-    /// Get the API token for the database
+    /// Get the API token for the database.
     ///
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
@@ -147,7 +219,7 @@ impl Container {
         self.api_token.as_str()
     }
 
-    /// Check if the container is running
+    /// Check if the container is running.
     ///
     /// Since we make sure the container is running via the typesystem, this will always return true.
     /// This method is still included to match the interface of the Go SDK.
