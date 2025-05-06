@@ -29,5 +29,6 @@
 
 pub mod client;
 pub mod error;
+pub mod event;
 #[cfg(feature = "testcontainer")]
 pub mod container;

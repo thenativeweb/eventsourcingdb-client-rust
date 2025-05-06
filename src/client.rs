@@ -2,10 +2,13 @@
 
 use std::fmt::Debug;
 
-use cloudevents::{AttributesReader, Event};
+use serde_json::Value;
 use url::Url;
 
-use crate::error::ClientError;
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate, ManagementEvent},
+};
 
 /// Enum for different requests that can be made to the DB
 #[derive(Debug)]
@@ -14,6 +17,8 @@ pub enum ClientRequest {
     Ping,
     /// Verify the API token by sending a request to the DB instance
     VerifyApiToken,
+    /// Write events to the DB instance
+    WriteEvents(Vec<EventCandidate>),
 }
 impl ClientRequest {
     /// Returns the URL path for the request
@@ -22,6 +27,7 @@ impl ClientRequest {
         match self {
             ClientRequest::Ping => "/api/v1/ping",
             ClientRequest::VerifyApiToken => "/api/v1/verify-api-token",
+            ClientRequest::WriteEvents(_) => "/api/v1/write-events",
         }
     }
 
@@ -30,7 +36,21 @@ impl ClientRequest {
     pub fn method(&self) -> reqwest::Method {
         match self {
             ClientRequest::Ping => reqwest::Method::GET,
-            ClientRequest::VerifyApiToken => reqwest::Method::POST,
+            ClientRequest::VerifyApiToken | ClientRequest::WriteEvents(_) => reqwest::Method::POST,
+        }
+    }
+
+    /// Returns the body for the request
+    pub fn json(self) -> Option<Result<Value, ClientError>> {
+        match self {
+            ClientRequest::Ping | ClientRequest::VerifyApiToken => None,
+            ClientRequest::WriteEvents(events) => {
+                #[derive(serde::Serialize, Debug)]
+                struct RequestBody {
+                    events: Vec<EventCandidate>,
+                }
+                Some(serde_json::to_value(RequestBody { events }).map_err(ClientError::SerdeJsonError))
+            }
         }
     }
 }
@@ -81,10 +101,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request(
-        &self,
-        endpoint: ClientRequest,
-    ) -> Result<reqwest::Response, ClientError> {
+    async fn request(&self, endpoint: ClientRequest) -> Result<reqwest::Response, ClientError> {
         match endpoint.method() {
             reqwest::Method::GET => Ok(self.get(endpoint).await),
             reqwest::Method::POST => Ok(self.post(endpoint).await),
@@ -113,20 +130,24 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn post(
-        &self,
-        endpoint: ClientRequest,
-    ) -> Result<reqwest::Response, ClientError> {
+    async fn post(&self, endpoint: ClientRequest) -> Result<reqwest::Response, ClientError> {
         let url = self
             .base_url
             .join(endpoint.url_path())
             .map_err(ClientError::URLParseError)?;
-        reqwest::Client::new()
+        let request = reqwest::Client::new()
             .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_token))
-            .send()
-            .await
-            .map_err(ClientError::ReqwestError)
+            .header("Authorization", format!("Bearer {}", self.api_token));
+        if let Some(body) = endpoint.json() {
+            request
+                .header("Content-Type", "application/json")
+                .json(&body?)
+        } else {
+            request
+        }
+        .send()
+        .await
+        .map_err(ClientError::ReqwestError)
     }
 
     /// Pings the DB instance to check if it is reachable.
@@ -136,7 +157,7 @@ impl Client {
     pub async fn ping(&self) -> Result<(), ClientError> {
         let response = self.request(ClientRequest::Ping).await?;
         if response.status().is_success()
-            && response.json::<Event>().await?.ty() == "io.eventsourcingdb.api.ping-received"
+            && response.json::<ManagementEvent>().await?.ty() == "io.eventsourcingdb.api.ping-received"
         {
             Ok(())
         } else {
@@ -151,11 +172,29 @@ impl Client {
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
         let response = self.request(ClientRequest::VerifyApiToken).await?;
         if response.status().is_success()
-            && response.json::<Event>().await?.ty() == "io.eventsourcingdb.api.api-token-verified"
+            && response.json::<ManagementEvent>().await?.ty() == "io.eventsourcingdb.api.api-token-verified"
         {
             Ok(())
         } else {
             Err(ClientError::APITokenInvalid)
+        }
+    }
+
+    /// Writes events to the DB instance.
+    /// 
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn write_events(
+        &self,
+        events: Vec<EventCandidate>,
+    ) -> Result<Vec<Event>, ClientError> {
+        let response = self.request(ClientRequest::WriteEvents(events)).await?;
+        println!("Response: {:?}", response.status());
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            println!("Failed to write events: {:?}", response.text().await);
+            Err(ClientError::WriteEventsFailed)
         }
     }
 }

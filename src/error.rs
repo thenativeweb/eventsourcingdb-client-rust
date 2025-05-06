@@ -28,6 +28,9 @@ pub enum ClientError {
   /// There was a problem with writing the events
   #[error("The events could not be written")]
   WriteEventsFailed,
+  /// There was a problem with the JSON serialization
+  #[error("The JSON serialization failed: {0}")]
+  SerdeJsonError(#[from] serde_json::Error),
 }
 
 /// Error type for the test container
@@ -40,4 +43,13 @@ pub enum ContainerError {
     /// URL parsing error
     #[error("URL parsing error: {0}")]
     URLParseError(#[from] url::ParseError),
+}
+
+/// Error type for the event
+#[derive(Debug, thiserror::Error)]
+pub enum EventError {
+    /// The passed cloudevent is invalid
+    #[cfg(feature = "cloudevents")]
+    #[error("The passed cloudevent is invalid")]
+    InvalidCloudevent,
 }
