@@ -1,14 +1,19 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![doc = include_str!("../README.md")]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+#![warn(
+    ambiguous_negative_literals,
+    bad_style,
+    clippy::pedantic,
+    missing_debug_implementations,
+    missing_docs,
+    non_shorthand_field_patterns,
+    overflowing_literals,
+    path_statements,
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_extern_crates,
+    unused_import_braces,
+    unused_qualifications,
+    unused_results
+)]
+#![deny(unsafe_code)]
