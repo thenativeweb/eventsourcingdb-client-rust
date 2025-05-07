@@ -11,6 +11,27 @@ use crate::{
     event::{Event, EventCandidate, ManagementEvent},
 };
 
+/// Enum for different preconditions that can be used when writing events
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum Precondition {
+    /// Check if the subject with the given path has no other events
+    #[serde(rename = "isSubjectPristine")]
+    IsSubjectPristine {
+        /// The subject to check
+        subject: String
+    },
+    /// Check if the subject with the given path has no other events
+    #[serde(rename = "isSubjectOnEventId")]
+    IsSubjectOnEventId {
+        /// The subject to check
+        subject: String,
+        /// The event ID to check against
+        #[serde(rename = "eventId")]
+        event_id: String,
+    },
+}
+
 /// Enum for different requests that can be made to the DB
 #[derive(Debug)]
 pub enum ClientRequest {
@@ -19,7 +40,7 @@ pub enum ClientRequest {
     /// Verify the API token by sending a request to the DB instance
     VerifyApiToken,
     /// Write events to the DB instance
-    WriteEvents(Vec<EventCandidate>),
+    WriteEvents(Vec<EventCandidate>, Vec<Precondition>),
 }
 impl ClientRequest {
     /// Returns the URL path for the request
@@ -28,7 +49,7 @@ impl ClientRequest {
         match self {
             ClientRequest::Ping => "/api/v1/ping",
             ClientRequest::VerifyApiToken => "/api/v1/verify-api-token",
-            ClientRequest::WriteEvents(_) => "/api/v1/write-events",
+            ClientRequest::WriteEvents(_, _) => "/api/v1/write-events",
         }
     }
 
@@ -37,7 +58,9 @@ impl ClientRequest {
     pub fn method(&self) -> reqwest::Method {
         match self {
             ClientRequest::Ping => reqwest::Method::GET,
-            ClientRequest::VerifyApiToken | ClientRequest::WriteEvents(_) => reqwest::Method::POST,
+            ClientRequest::VerifyApiToken | ClientRequest::WriteEvents(_, _) => {
+                reqwest::Method::POST
+            }
         }
     }
 
@@ -45,12 +68,19 @@ impl ClientRequest {
     pub fn json(self) -> Option<Result<Value, ClientError>> {
         match self {
             ClientRequest::Ping | ClientRequest::VerifyApiToken => None,
-            ClientRequest::WriteEvents(events) => {
+            ClientRequest::WriteEvents(events, preconditions) => {
                 #[derive(Serialize, Debug)]
                 struct RequestBody {
                     events: Vec<EventCandidate>,
+                    preconditions: Vec<Precondition>,
                 }
-                Some(serde_json::to_value(RequestBody { events }).map_err(ClientError::SerdeJsonError))
+                Some(
+                    serde_json::to_value(RequestBody {
+                        events,
+                        preconditions,
+                    })
+                    .map_err(ClientError::SerdeJsonError),
+                )
             }
         }
     }
@@ -140,9 +170,11 @@ impl Client {
             .post(url)
             .header("Authorization", format!("Bearer {}", self.api_token));
         if let Some(body) = endpoint.json() {
+            let body = body?;
+            println!("Request body: {body:?}");
             request
                 .header("Content-Type", "application/json")
-                .json(&body?)
+                .json(&body)
         } else {
             request
         }
@@ -158,7 +190,8 @@ impl Client {
     pub async fn ping(&self) -> Result<(), ClientError> {
         let response = self.request(ClientRequest::Ping).await?;
         if response.status().is_success()
-            && response.json::<ManagementEvent>().await?.ty() == "io.eventsourcingdb.api.ping-received"
+            && response.json::<ManagementEvent>().await?.ty()
+                == "io.eventsourcingdb.api.ping-received"
         {
             Ok(())
         } else {
@@ -173,7 +206,8 @@ impl Client {
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
         let response = self.request(ClientRequest::VerifyApiToken).await?;
         if response.status().is_success()
-            && response.json::<ManagementEvent>().await?.ty() == "io.eventsourcingdb.api.api-token-verified"
+            && response.json::<ManagementEvent>().await?.ty()
+                == "io.eventsourcingdb.api.api-token-verified"
         {
             Ok(())
         } else {
@@ -182,14 +216,17 @@ impl Client {
     }
 
     /// Writes events to the DB instance.
-    /// 
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn write_events(
         &self,
         events: Vec<EventCandidate>,
+        preconditions: Vec<Precondition>,
     ) -> Result<Vec<Event>, ClientError> {
-        let response = self.request(ClientRequest::WriteEvents(events)).await?;
+        let response = self
+            .request(ClientRequest::WriteEvents(events, preconditions))
+            .await?;
         println!("Response: {:?}", response.status());
         if response.status().is_success() {
             Ok(response.json().await?)

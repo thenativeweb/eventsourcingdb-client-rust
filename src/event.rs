@@ -8,9 +8,78 @@ use time::OffsetDateTime;
 use typed_builder::TypedBuilder;
 
 #[cfg(feature = "cloudevents")]
-use cloudevents::{AttributesReader, EventBuilder};
-#[cfg(feature = "cloudevents")]
 use crate::error::EventError;
+#[cfg(feature = "cloudevents")]
+use cloudevents::{AttributesReader, EventBuilder};
+
+/// Represents the trace information of an event.
+/// This is used for distributed tracing.
+/// It can either be a traceparent or a traceparent and tracestate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TraceInfo {
+    // LEAVE ORDER AS IS
+    // This is important for deserialization as the traceparent is always present
+
+    /// The traceparent and tracestate of the event.
+    /// This is used for distributed tracing.
+    WithState {
+        /// The traceparent of the event.
+        /// This is used for distributed tracing.
+        #[serde(rename = "traceparent")]
+        traceparent: String,
+        /// The tracestate of the event.
+        /// This is used for distributed tracing.
+        #[serde(rename = "tracestate")]
+        tracestate: String,
+    },
+    /// The traceparent of the event.
+    /// This is used for distributed tracing.
+    Traceparent {
+        /// The traceparent of the event.
+        /// This is used for distributed tracing.
+        #[serde(rename = "traceparent")]
+        traceparent: String,
+    },
+}
+
+impl TraceInfo {
+    /// Get the traceparent of the event.
+    #[must_use]
+    pub fn traceparent(&self) -> &str {
+        match self {
+            Self::Traceparent { traceparent } | Self::WithState { traceparent, .. } => traceparent,
+        }
+    }
+    /// Get the tracestate of the event.
+    #[must_use]
+    pub fn tracestate(&self) -> Option<&str> {
+        match self {
+            Self::Traceparent { .. } => None,
+            Self::WithState { tracestate, .. } => Some(tracestate),
+        }
+    }
+
+    /// Create a new `TraceInfo` from a cloudevent.
+    /// This will return None if the cloudevent does not contain a traceparent or tracestate.
+    ///
+    /// # Errors
+    /// If the cloudevent contains a tracestate but no traceparent, an error will be returned.
+    pub fn from_cloudevent(event: &cloudevents::Event) -> Result<Option<Self>, EventError> {
+        let traceparent = event.extension("traceparent").map(ToString::to_string);
+        let tracestate = event.extension("tracestate").map(ToString::to_string);
+
+        match (traceparent, tracestate) {
+            (Some(traceparent), Some(tracestate)) => Ok(Some(Self::WithState {
+                traceparent,
+                tracestate,
+            })),
+            (Some(traceparent), None) => Ok(Some(Self::Traceparent { traceparent })),
+            (None, None) => Ok(None),
+            (None, Some(_)) => Err(EventError::InvalidCloudevent),
+        }
+    }
+}
 
 /// Represents an event candidate that can be sent to the DB.
 /// This is a simplified version of the [Event] type.
@@ -33,9 +102,9 @@ pub struct EventCandidate {
     pub r#type: String,
     /// The traceparent of the event.
     /// This is used for distributed tracing.
-    #[builder(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub traceparent: Option<String>,
+    #[builder(default, setter(strip_option))]
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    pub traceinfo: Option<TraceInfo>,
 }
 
 #[cfg(feature = "cloudevents")]
@@ -50,13 +119,14 @@ impl TryFrom<cloudevents::Event> for EventCandidate {
             Some(subject) => subject.to_string(),
             None => return Err(EventError::InvalidCloudevent),
         };
+        let traceinfo = TraceInfo::from_cloudevent(&event)?;
 
         Ok(Self {
             data,
             source: event.source().to_string(),
             subject,
             r#type: event.ty().to_string(),
-            traceparent: event.extension("traceparent").map(ToString::to_string),
+            traceinfo,
         })
     }
 }
@@ -74,8 +144,8 @@ pub struct Event {
     subject: String,
     #[serde(with = "time::serde::iso8601")]
     time: OffsetDateTime,
-    traceparent: Option<String>,
-    tracestate: Option<String>,
+    #[serde(flatten)]
+    traceinfo: Option<TraceInfo>,
     r#type: String,
 }
 
@@ -130,12 +200,17 @@ impl Event {
     /// Get the traceparent of an event.
     #[must_use]
     pub fn traceparent(&self) -> Option<&str> {
-        self.traceparent.as_deref()
+        self.traceinfo.as_ref().map(TraceInfo::traceparent)
     }
     /// Get the tracestate of an event.
     #[must_use]
     pub fn tracestate(&self) -> Option<&str> {
-        self.tracestate.as_deref()
+        self.traceinfo.as_ref().and_then(|t| t.tracestate())
+    }
+    /// Get the traceinfo of an event.
+    #[must_use]
+    pub fn traceinfo(&self) -> Option<&TraceInfo> {
+        self.traceinfo.as_ref()
     }
     /// Get the type of an event.
     #[must_use]
@@ -151,7 +226,7 @@ impl From<Event> for EventCandidate {
             source: event.source,
             subject: event.subject,
             r#type: event.r#type,
-            traceparent: event.traceparent,
+            traceinfo: event.traceinfo,
         }
     }
 }
@@ -167,8 +242,11 @@ impl From<Event> for cloudevents::Event {
             .time(event.time.to_string())
             .data(event.datacontenttype, event.data);
 
-        if let Some(traceparent) = event.traceparent {
-            builder = builder.extension("traceparent", traceparent);
+        if let Some(traceinfo) = event.traceinfo {
+            builder = builder.extension("traceparent", traceinfo.traceparent());
+            if let Some(tracestate) = traceinfo.tracestate() {
+                builder = builder.extension("tracestate", tracestate);
+            }
         }
 
         builder.build().expect("Failed to build cloudevent")
@@ -241,7 +319,7 @@ impl From<ManagementEvent> for EventCandidate {
             source: event.source,
             subject: event.subject,
             r#type: event.r#type,
-            traceparent: None,
+            traceinfo: None,
         }
     }
 }
