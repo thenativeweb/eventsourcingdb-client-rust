@@ -19,7 +19,7 @@ pub enum Precondition {
     #[serde(rename = "isSubjectPristine")]
     IsSubjectPristine {
         /// The subject to check
-        subject: String
+        subject: String,
     },
     /// Check if the subject with the given path has no other events
     #[serde(rename = "isSubjectOnEventId")]
@@ -32,6 +32,15 @@ pub enum Precondition {
     },
 }
 
+/// Enum for different orders that can be used when reading events
+#[derive(Debug, Serialize)]
+pub enum Order {
+    /// Read events in chronological order
+    Chronological,
+    /// Read events in reverse chronological order
+    Antichronological,
+}
+
 /// Enum for different requests that can be made to the DB
 #[derive(Debug)]
 pub enum ClientRequest {
@@ -41,6 +50,19 @@ pub enum ClientRequest {
     VerifyApiToken,
     /// Write events to the DB instance
     WriteEvents(Vec<EventCandidate>, Vec<Precondition>),
+    /// Read events from the DB instance
+    ReadEvents {
+        /// The subject to read events from
+        subject: String,
+        /// Read sub-subjects recursively
+        recursive: bool,
+        /// The starting point for reading events
+        order: Option<Order>,
+        /// The ending point for reading events
+        boundaries: Option<()>,
+        /// The event type to start reading from
+        from_latest_event: Option<String>,
+    },
 }
 impl ClientRequest {
     /// Returns the URL path for the request
@@ -50,6 +72,7 @@ impl ClientRequest {
             ClientRequest::Ping => "/api/v1/ping",
             ClientRequest::VerifyApiToken => "/api/v1/verify-api-token",
             ClientRequest::WriteEvents(_, _) => "/api/v1/write-events",
+            ClientRequest::ReadEvents { .. } => "/api/v1/read-events",
         }
     }
 
@@ -58,9 +81,9 @@ impl ClientRequest {
     pub fn method(&self) -> reqwest::Method {
         match self {
             ClientRequest::Ping => reqwest::Method::GET,
-            ClientRequest::VerifyApiToken | ClientRequest::WriteEvents(_, _) => {
-                reqwest::Method::POST
-            }
+            ClientRequest::VerifyApiToken
+            | ClientRequest::WriteEvents(_, _)
+            | ClientRequest::ReadEvents { .. } => reqwest::Method::POST,
         }
     }
 
@@ -78,6 +101,32 @@ impl ClientRequest {
                     serde_json::to_value(RequestBody {
                         events,
                         preconditions,
+                    })
+                    .map_err(ClientError::SerdeJsonError),
+                )
+            }
+            ClientRequest::ReadEvents {
+                subject,
+                recursive,
+                order,
+                boundaries,
+                from_latest_event,
+            } => {
+                #[derive(Serialize, Debug)]
+                struct RequestBody {
+                    subject: String,
+                    recursive: bool,
+                    order: Option<Order>,
+                    boundaries: Option<()>,
+                    from_latest_event: Option<String>,
+                }
+                Some(
+                    serde_json::to_value(RequestBody {
+                        subject,
+                        recursive,
+                        order,
+                        boundaries,
+                        from_latest_event,
                     })
                     .map_err(ClientError::SerdeJsonError),
                 )
