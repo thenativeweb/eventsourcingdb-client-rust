@@ -219,15 +219,6 @@ impl Container {
         self.api_token.as_str()
     }
 
-    /// Check if the container is running.
-    ///
-    /// Since we make sure the container is running via the typesystem, this will always return true.
-    /// This method is still included to match the interface of the Go SDK.
-    #[must_use]
-    pub fn is_running(&self) -> bool {
-        true
-    }
-
     /// Stop the container
     ///
     /// This will consume the running container and stop it.
