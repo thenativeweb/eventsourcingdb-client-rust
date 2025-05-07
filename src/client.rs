@@ -2,6 +2,7 @@
 
 use std::fmt::Debug;
 
+use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 
@@ -45,7 +46,7 @@ impl ClientRequest {
         match self {
             ClientRequest::Ping | ClientRequest::VerifyApiToken => None,
             ClientRequest::WriteEvents(events) => {
-                #[derive(serde::Serialize, Debug)]
+                #[derive(Serialize, Debug)]
                 struct RequestBody {
                     events: Vec<EventCandidate>,
                 }

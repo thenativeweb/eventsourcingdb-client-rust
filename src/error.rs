@@ -23,6 +23,7 @@ pub enum ClientError {
   #[error("The URL is invalid: {0}")]
   URLParseError(#[from] url::ParseError),
   /// There was a problem with the `cloudevents` message
+#[cfg(feature = "testcontainer")]
   #[error("The CloudEvents message is invalid: {0}")]
   CloudeventsMessageError(#[from] cloudevents::message::Error),
   /// There was a problem with writing the events

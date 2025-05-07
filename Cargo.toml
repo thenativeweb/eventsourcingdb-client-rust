@@ -9,12 +9,12 @@ testcontainer = ["dep:testcontainers"]
 cloudevents = ["dep:cloudevents-sdk"]
 
 [dependencies]
-reqwest = "0.12.15"
+reqwest = { version = "0.12.15", features = ["json"] }
 thiserror = "2.0.12"
 url = "2.5.4"
 testcontainers = { version = "0.24.0", features = ["http_wait"], optional = true }
 cloudevents-sdk = { version = "0.8.0", features = ["reqwest"], optional = true}
-serde = "1.0.219"
+serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 typed-builder = "0.21.0"
 time = { version = "0.3.41", features = ["formatting", "parsing", "serde", "std"] }

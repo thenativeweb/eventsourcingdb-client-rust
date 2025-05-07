@@ -2,14 +2,15 @@
 //!
 //! It also provides optional compatibility to the [cloudevents] crate (enable the `cloudevents` feature to get this).
 
-use cloudevents::AttributesReader;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 use typed_builder::TypedBuilder;
 
 #[cfg(feature = "cloudevents")]
-use cloudevents::EventBuilder;
+use cloudevents::{AttributesReader, EventBuilder};
+#[cfg(feature = "cloudevents")]
+use crate::error::EventError;
 
 /// Represents an event candidate that can be sent to the DB.
 /// This is a simplified version of the [Event] type.
@@ -155,7 +156,6 @@ impl From<Event> for EventCandidate {
     }
 }
 
-use crate::error::EventError;
 #[cfg(feature = "cloudevents")]
 impl From<Event> for cloudevents::Event {
     fn from(event: Event) -> Self {
