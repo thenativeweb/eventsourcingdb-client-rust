@@ -32,7 +32,7 @@
 //!
 //! ## Stopping the container
 //! The container will be stopped automatically when it is dropped.
-//! You can also stop it manually by calling the [Container::stop] method.
+//! You can also stop it manually by calling the [`Container::stop`] method.
 use testcontainers::{
     ContainerAsync, GenericImage,
     core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
@@ -40,11 +40,11 @@ use testcontainers::{
 };
 use url::{Host, Url};
 
-use crate::error::ContainerError;
+use crate::{client::Client, error::ContainerError};
 
 /// Builder for the [Container].
 ///
-/// **You should not use this directly**, but use the [Container::builder] method instead.
+/// **You should not use this directly**, but use the [`Container::builder`] method instead.
 ///
 /// By default this container is the same as running this:
 /// ```
@@ -94,7 +94,7 @@ impl ContainerBuilder {
     ///
     /// This is the port that will be exposed from the container to the host.
     /// It will be mapped to a random port on the host that you can connect to.
-    /// To find that port, use the [Container::get_mapped_port] method.
+    /// To find that port, use the [`Container::get_mapped_port`] method.
     #[must_use]
     pub fn with_port(mut self, port: impl Into<ContainerPort>) -> Self {
         self.internal_port = port.into();
@@ -141,8 +141,8 @@ impl ContainerBuilder {
 /// Aside from managing the container, this struct also provides methods to get the data needed to connect to
 /// the database or even a fully configured client.
 /// 
-/// You'll most likely want to use the [Container::start_default] method to create a new container instance for your tests.
-/// For more details, see the [crate::container] module documentation.
+/// You'll most likely want to use the [`Container::start_default`] method to create a new container instance for your tests.
+/// For more details, see the [`crate::container`] module documentation.
 /// ```
 /// # use eventsourcingdb_client_rust::container::Container;
 /// # tokio_test::block_on(async {
@@ -159,8 +159,8 @@ pub struct Container {
 
 impl Container {
     /// Create a new container builder instance to configure the container.
-    /// The returned builder starts with the default settings and is the same as calling [ContainerBuilder::default].
-    /// This is the recommended way to create a new [ContainerBuilder] instance.
+    /// The returned builder starts with the default settings and is the same as calling [`ContainerBuilder::default`].
+    /// This is the recommended way to create a new [`ContainerBuilder`] instance.
     #[must_use]
     pub fn builder() -> ContainerBuilder {
         ContainerBuilder::default()
@@ -168,11 +168,11 @@ impl Container {
 
     /// Shortcut method to start the container with default settings.
     /// 
-    /// This is the same as calling [Container::builder] and then [ContainerBuilder::start].
+    /// This is the same as calling [`Container::builder`] and then [`ContainerBuilder::start`].
     /// In most cases this will create a contaienr with the latest image tag and a working configuration.
     ///
     /// # Errors
-    /// This functions returns the errors of `ContainerBuilder::start()`
+    /// This functions returns the errors of [`ContainerBuilder::start()`]
     pub async fn start_default() -> Result<Container, ContainerError> {
         Self::builder().start().await
     }
@@ -189,7 +189,7 @@ impl Container {
 
     /// Get the mapped port for the database.
     /// 
-    /// This is the port that you can use to connect to the database. This will be a random port that is mapped to the internal port configured via [ContainerBuilder::with_port].
+    /// This is the port that you can use to connect to the database. This will be a random port that is mapped to the internal port configured via [`ContainerBuilder::with_port`].
     ///
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
@@ -231,13 +231,12 @@ impl Container {
         Ok(())
     }
 
-    // TODO!: Uncomment this when the client is available
-    // /// Get a new client instance for the database container
-    // ///
-    // /// # Errors
-    // /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
-    // pub async fn get_client(&self) -> Result<Client, ContainerError> {
-    //     let base_url = self.get_base_url().await?;
-    //     Ok(Client::new(base_url, self.api_token.clone()))
-    // }
+    /// Get a new client instance for the database container
+    ///
+    /// # Errors
+    /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
+    pub async fn get_client(&self) -> Result<Client, ContainerError> {
+        let base_url = self.get_base_url().await?;
+        Ok(Client::new(base_url, self.api_token.clone()))
+    }
 }

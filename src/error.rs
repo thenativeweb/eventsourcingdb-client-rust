@@ -1,8 +1,41 @@
 //! This module contains all error types of the SDK.
 
-/// Error type for the [crate::container] feature.
+use reqwest::{self, StatusCode};
+use thiserror::Error;
+
+/// Error type for the client
+#[derive(Debug, Error)]
+pub enum ClientError {
+    /// The provided request method is invalid
+    #[error("The provided request method is invalid")]
+    InvalidRequestMethod,
+    /// The provided API token is invalid
+    #[error("The provided API token is invalid")]
+    APITokenInvalid,
+    /// There was a generic problem with pinging the DB
+    #[error("Pinging the DB failed")]
+    PingFailed,
+    /// There was a problem making a request to the DB
+    #[error("The request failed with error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    /// There was a problem parsing the URL
+    #[error("The URL is invalid: {0}")]
+    URLParseError(#[from] url::ParseError),
+    /// There was a problem with the JSON serialization
+    #[error("The JSON serialization failed: {0}")]
+    SerdeJsonError(#[from] serde_json::Error),
+    /// The DB returned an error+
+    #[error("The DB returned an error: {0}")]
+    DBError(StatusCode, String),
+    /// There was a problem with the `cloudevents` message
+    #[cfg(feature = "cloudevents")]
+    #[error("The CloudEvents message is invalid: {0}")]
+    CloudeventsMessageError(#[from] cloudevents::message::Error),
+}
+
+/// Error type for the [`crate::container`] feature.
 #[cfg(feature = "testcontainer")]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 pub enum ContainerError {
     /// This error is returned when anything goes wrong with the testcontainers crate.
     /// If you experience this error, a likely cause is that your docker daemon is not running.

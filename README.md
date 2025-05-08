@@ -7,7 +7,7 @@ The official Rust client SDK for [EventSourcingDB](https://www.eventsourcingdb.i
 This is a work in progress and not yet ready for production use.
 Based on the [compliance criteria](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/) the SDK covers these criteria:
 
-- ❌ [Essentials](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/#essentials)
+- 🚀 [Essentials](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/#essentials)
 - ❌ [Writing Events](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/#writing-events)
 - ❌ [Reading Events](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/#reading-events)
 - ❌ [Using EventQL](https://docs.eventsourcingdb.io/client-sdks/compliance-criteria/#using-eventql)
