@@ -14,3 +14,7 @@
     unsafe_code,
     warnings
 )]
+
+pub mod error;
+#[cfg(feature = "testcontainer")]
+pub mod container;
