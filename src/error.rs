@@ -29,9 +29,15 @@ pub enum ClientError {
   /// There was a problem with writing the events
   #[error("The events could not be written")]
   WriteEventsFailed,
+  /// There was a problem with reading the events
+  #[error("The events could not be read")]
+  ReadEventsFailed,
   /// There was a problem with the JSON serialization
   #[error("The JSON serialization failed: {0}")]
   SerdeJsonError(#[from] serde_json::Error),
+  /// There was an IO error
+  #[error("The IO operation failed: {0}")]
+  IoError(#[from] std::io::Error),
 }
 
 /// Error type for the test container

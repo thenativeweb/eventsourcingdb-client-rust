@@ -26,11 +26,9 @@ pub enum TraceInfo {
     WithState {
         /// The traceparent of the event.
         /// This is used for distributed tracing.
-        #[serde(rename = "traceparent")]
         traceparent: String,
         /// The tracestate of the event.
         /// This is used for distributed tracing.
-        #[serde(rename = "tracestate")]
         tracestate: String,
     },
     /// The traceparent of the event.
@@ -38,7 +36,6 @@ pub enum TraceInfo {
     Traceparent {
         /// The traceparent of the event.
         /// This is used for distributed tracing.
-        #[serde(rename = "traceparent")]
         traceparent: String,
     },
 }

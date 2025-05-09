@@ -2,8 +2,11 @@
 
 use std::fmt::Debug;
 
-use serde::Serialize;
+use futures::{Stream, StreamExt, TryStreamExt};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_stream::wrappers::LinesStream;
 use url::Url;
 
 use crate::{
@@ -54,14 +57,6 @@ pub enum ClientRequest {
     ReadEvents {
         /// The subject to read events from
         subject: String,
-        /// Read sub-subjects recursively
-        recursive: bool,
-        /// The starting point for reading events
-        order: Option<Order>,
-        /// The ending point for reading events
-        boundaries: Option<()>,
-        /// The event type to start reading from
-        from_latest_event: Option<String>,
     },
 }
 impl ClientRequest {
@@ -105,30 +100,14 @@ impl ClientRequest {
                     .map_err(ClientError::SerdeJsonError),
                 )
             }
-            ClientRequest::ReadEvents {
-                subject,
-                recursive,
-                order,
-                boundaries,
-                from_latest_event,
-            } => {
+            ClientRequest::ReadEvents { subject } => {
                 #[derive(Serialize, Debug)]
                 struct RequestBody {
                     subject: String,
-                    recursive: bool,
-                    order: Option<Order>,
-                    boundaries: Option<()>,
-                    from_latest_event: Option<String>,
                 }
                 Some(
-                    serde_json::to_value(RequestBody {
-                        subject,
-                        recursive,
-                        order,
-                        boundaries,
-                        from_latest_event,
-                    })
-                    .map_err(ClientError::SerdeJsonError),
+                    serde_json::to_value(RequestBody { subject })
+                        .map_err(ClientError::SerdeJsonError),
                 )
             }
         }
@@ -282,6 +261,38 @@ impl Client {
         } else {
             println!("Failed to write events: {:?}", response.text().await);
             Err(ClientError::WriteEventsFailed)
+        }
+    }
+
+    /// Reads events from the DB instance.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn read_events(
+        &self,
+        subject: String,
+    ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
+        #[derive(Debug, Deserialize)]
+        struct ResponseItem {
+            payload: Event,
+        }
+        let response = self.request(ClientRequest::ReadEvents { subject }).await?;
+        if response.status().is_success() {
+            let stream = response.bytes_stream();
+            let reader = BufReader::new(tokio_util::io::StreamReader::new(
+                stream.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+            ));
+
+            let res = LinesStream::new(reader.lines()).map(|line| {
+                line.map_err(ClientError::IoError).and_then(|line| {
+                    serde_json::from_str::<ResponseItem>(&line)
+                        .map(|r| r.payload)
+                        .map_err(ClientError::SerdeJsonError)
+                })
+            });
+            Ok(res)
+        } else {
+            Err(ClientError::ReadEventsFailed)
         }
     }
 }

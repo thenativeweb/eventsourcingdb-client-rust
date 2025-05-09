@@ -1,0 +1,2237 @@
+openapi: 3.1.0
+info:
+    title: EventSourcingDB
+    description: EventSourcingDB – because it's more than just data
+    version: 1.0.0
+servers:
+    - url: /api/v1
+paths:
+    /audit-history:
+        post:
+            summary: Audits the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: false
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                latestEventHash:
+                                    type: string
+                                    pattern: ^[a-fA-F0-9]{64}$
+                                latestEventId:
+                                    type: string
+                                    examples:
+                                        - "1"
+                                        - "2"
+                                        - "3"
+                                        - "4"
+                                    pattern: ^\d+$
+                            required:
+                                - latestEventId
+                                - latestEventHash
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The database was audited.
+                    content:
+                        application/json:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        latestEventHash:
+                                            type: string
+                                            pattern: ^[a-fA-F0-9]{64}$
+                                        latestEventId:
+                                            type: string
+                                            examples:
+                                                - "1"
+                                                - "2"
+                                                - "3"
+                                                - "4"
+                                            pattern: ^\d+$
+                                      required:
+                                        - latestEventId
+                                        - latestEventHash
+                                      additionalProperties: false
+                                    - type: object
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "409":
+                    description: The request caused a conflict.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /backup:
+        post:
+            summary: Gets a backup of the database.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The backup of the database is being created.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                data:
+                                                    type: object
+                                                    additionalProperties: true
+                                                    examples:
+                                                        - someInt: 42
+                                                          someNumber: 3.14
+                                                          someObject:
+                                                            someBoolean: true
+                                                          someString: someValue
+                                                datacontenttype:
+                                                    const: application/json
+                                                hash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "0"
+                                                        - "1"
+                                                        - "2"
+                                                    pattern: ^\d+$
+                                                predecessorhash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                source:
+                                                    type: string
+                                                    format: uri
+                                                specversion:
+                                                    const: "1.0"
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                time:
+                                                    type: string
+                                                    format: date-time
+                                                traceparent:
+                                                    type: string
+                                                    examples:
+                                                        - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                                    pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                                tracestate:
+                                                    type: string
+                                                    examples:
+                                                        - some-number=31092,some-string=foo
+                                                    pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                                type:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            required:
+                                                - data
+                                                - datacontenttype
+                                                - hash
+                                                - id
+                                                - predecessorhash
+                                                - source
+                                                - specversion
+                                                - subject
+                                                - time
+                                                - type
+                                            additionalProperties: false
+                                        type:
+                                            const: event
+                                      required:
+                                        - type
+                                        - payload
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                eventType:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                                schema:
+                                                    type: object
+                                                    properties:
+                                                        properties:
+                                                            type: object
+                                                            additionalProperties: true
+                                                        type:
+                                                            const: object
+                                                    required:
+                                                        - type
+                                                        - properties
+                                                    additionalProperties: true
+                                                    examples:
+                                                        - additionalProperties: false
+                                                          properties:
+                                                            someInt:
+                                                                type: integer
+                                                                examples:
+                                                                    - 42
+                                                            someNumber:
+                                                                type: number
+                                                                examples:
+                                                                    - 3.14
+                                                            someObject:
+                                                                type: object
+                                                                properties:
+                                                                    someBoolean:
+                                                                        type: boolean
+                                                                additionalProperties: true
+                                                            someString:
+                                                                type: string
+                                                                examples:
+                                                                    - someValue
+                                                          required:
+                                                            - someString
+                                                            - someInt
+                                                            - someNumber
+                                                          type: object
+                                            required:
+                                                - eventType
+                                                - schema
+                                            additionalProperties: false
+                                        type:
+                                            const: schema
+                                      required:
+                                        - type
+                                        - payload
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: string
+                                            minLength: 1
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /diagnostics:
+        get:
+            summary: Gets the diagnostics information of the server.
+            tags:
+                - Status
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The diagnostics information of the server.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    configuration:
+                                        type: object
+                                        properties:
+                                            httpsEnabled:
+                                                type: boolean
+                                            port:
+                                                type: integer
+                                            storeDataDirectory:
+                                                type: string
+                                            storeTemporary:
+                                                type: boolean
+                                            verbose:
+                                                type: boolean
+                                            withUi:
+                                                type: boolean
+                                        required:
+                                            - httpsEnabled
+                                            - port
+                                            - storeDataDirectory
+                                            - storeTemporary
+                                            - verbose
+                                            - withUi
+                                        additionalProperties: false
+                                    system:
+                                        type: object
+                                        properties:
+                                            architecture:
+                                                type: string
+                                            cpuCount:
+                                                type: integer
+                                            memorySize:
+                                                type: integer
+                                            operatingSystem:
+                                                type: string
+                                        additionalProperties: false
+                                required:
+                                    - system
+                                    - configuration
+                                additionalProperties: false
+                "401":
+                    description: The request was not authorized.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /format-eventql-query:
+        post:
+            summary: Formats an EventQL query into a standardized format.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                query:
+                                    type: string
+                                    minLength: 1
+                                    examples:
+                                        - FROM e IN events WHERE e.type != "registered" GROUP BY e.type PROJECT INTO e
+                            required:
+                                - query
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The query was formatted.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    query:
+                                        type: string
+                                        minLength: 1
+                                        examples:
+                                            - FROM e IN events\n\tWHERE e.type != "registered"\n\t\tGROUP BY e.type\n\t\t\tPROJECT INTO e
+                                required:
+                                    - query
+                                additionalProperties: false
+                "400":
+                    description: The request or query had an invalid format.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /health:
+        get:
+            summary: Gets the health status of the server.
+            tags:
+                - Status
+            security:
+                - BearerAuth: []
+            parameters:
+                - in: query
+                  name: format
+                  description: ""
+                  schema:
+                    type: string
+                    enum:
+                        - rfc
+                        - openmetrics
+                    default: rfc
+            responses:
+                "200":
+                    description: The health status of the server is normal or degraded.
+                    content:
+                        application/health+json:
+                            schema:
+                                type: object
+                                properties:
+                                    checks:
+                                        type: object
+                                        properties:
+                                            license:remaining:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: seconds
+                                                        observedValue:
+                                                            type: number
+                                                            format: float
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The remaining time of the license.
+                                            process:cpuUsage:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: cores
+                                                        observedValue:
+                                                            type: number
+                                                            format: float
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The CPU usage of the server.
+                                            process:memorySys:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The total amount of memory allocated by the server.
+                                            process:uptime:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: seconds
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The uptime of the server.
+                                            store:eventCapacity:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedValue:
+                                                            type: number
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                    additionalProperties: false
+                                                description: The event capacity of the database.
+                                            store:eventCount:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedValue:
+                                                            type: number
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                    additionalProperties: false
+                                                description: The number of events currently stored in the database.
+                                            store:eventDataSizeAverage:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The average event data size
+                                            store:eventDataSizeMaximum:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The maximum event data size.
+                                            store:eventWriteTimeAverage:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: seconds
+                                                        observedValue:
+                                                            type: number
+                                                            format: float
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The average time taken to write an event.
+                                            store:eventWriteTimeMaximum:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: seconds
+                                                        observedValue:
+                                                            type: number
+                                                            format: float
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The maximum time taken to write an event.
+                                            store:operationMode:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedValue:
+                                                            type: string
+                                                            enum:
+                                                                - read-only
+                                                                - read-write
+                                                                - locked
+                                                                - unknown
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                    additionalProperties: false
+                                                description: The current operation mode of the database.
+                                            store:sizeData:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The event disk usage of the server.
+                                            store:sizeIndex:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The index disk usage of the server.
+                                            store:sizeJournal:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The journal disk usage of the server.
+                                            store:sizeSchemas:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The schema disk usage of the server.
+                                            store:sizeTotal:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The total disk usage of the server.
+                                            system:cpuCount:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: cores
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The number of CPU cores of the machine.
+                                            system:diskRemaining:
+                                                type: array
+                                                items:
+                                                    type: object
+                                                    properties:
+                                                        observedUnit:
+                                                            const: bytes
+                                                        observedValue:
+                                                            type: number
+                                                            format: int64
+                                                        status:
+                                                            type: string
+                                                            enum:
+                                                                - pass
+                                                                - warn
+                                                                - fail
+                                                    required:
+                                                        - status
+                                                        - observedValue
+                                                        - observedUnit
+                                                    additionalProperties: false
+                                                description: The remaining disk space of the machine.
+                                        additionalProperties: false
+                                    status:
+                                        type: string
+                                        enum:
+                                            - pass
+                                            - warn
+                                            - fail
+                                required:
+                                    - status
+                                    - checks
+                                additionalProperties: false
+                        application/openmetrics-text:
+                            schema:
+                                type: string
+                                description: The metrics in the OpenMetrics format.
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The health status of the server is critical.
+                "503":
+                    description: The server is currently not available.
+    /observe-events:
+        post:
+            summary: Observes events written to the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                options:
+                                    type: object
+                                    properties:
+                                        fromLatestEvent:
+                                            type: object
+                                            properties:
+                                                ifEventIsMissing:
+                                                    type: string
+                                                    enum:
+                                                        - read-everything
+                                                        - wait-for-event
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                type:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            required:
+                                                - subject
+                                                - type
+                                                - ifEventIsMissing
+                                            additionalProperties: false
+                                        lowerBound:
+                                            type: object
+                                            properties:
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "1"
+                                                        - "2"
+                                                        - "3"
+                                                        - "4"
+                                                    pattern: ^\d+$
+                                                type:
+                                                    type: string
+                                                    enum:
+                                                        - inclusive
+                                                        - exclusive
+                                            required:
+                                                - id
+                                                - type
+                                            additionalProperties: false
+                                        recursive:
+                                            type: boolean
+                                    required:
+                                        - recursive
+                                    additionalProperties: false
+                                subject:
+                                    type: string
+                                    examples:
+                                        - /some/subject
+                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                            required:
+                                - subject
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The events written to the database are being observed.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                data:
+                                                    type: object
+                                                    additionalProperties: true
+                                                    examples:
+                                                        - someInt: 42
+                                                          someNumber: 3.14
+                                                          someObject:
+                                                            someBoolean: true
+                                                          someString: someValue
+                                                datacontenttype:
+                                                    const: application/json
+                                                hash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "0"
+                                                        - "1"
+                                                        - "2"
+                                                    pattern: ^\d+$
+                                                predecessorhash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                source:
+                                                    type: string
+                                                    format: uri
+                                                specversion:
+                                                    const: "1.0"
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                time:
+                                                    type: string
+                                                    format: date-time
+                                                traceparent:
+                                                    type: string
+                                                    examples:
+                                                        - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                                    pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                                tracestate:
+                                                    type: string
+                                                    examples:
+                                                        - some-number=31092,some-string=foo
+                                                    pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                                type:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            required:
+                                                - data
+                                                - datacontenttype
+                                                - hash
+                                                - id
+                                                - predecessorhash
+                                                - source
+                                                - specversion
+                                                - subject
+                                                - time
+                                                - type
+                                            additionalProperties: false
+                                        type:
+                                            const: event
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An event was written to the database.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            additionalProperties: false
+                                        type:
+                                            const: heartbeat
+                                      required:
+                                        - type
+                                        - payload
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                error:
+                                                    type: string
+                                                    minLength: 1
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while observing the events written to the database.
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /ping:
+        get:
+            summary: Pings the server.
+            tags:
+                - Status
+            security: []
+            responses:
+                "200":
+                    description: The server is available.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        type: object
+                                        properties:
+                                            message:
+                                                const: My God, it's full of stars.
+                                        required:
+                                            - message
+                                        additionalProperties: false
+                                    datacontenttype:
+                                        const: application/json
+                                    id:
+                                        type: string
+                                        examples:
+                                            - "1"
+                                            - "2"
+                                            - "3"
+                                            - "4"
+                                        pattern: ^\d+$
+                                    source:
+                                        const: https://www.eventsourcingdb.io
+                                    specversion:
+                                        const: "1.0"
+                                    subject:
+                                        const: /api/v1/ping
+                                    time:
+                                        type: string
+                                        format: date-time
+                                    type:
+                                        const: io.eventsourcingdb.api.ping-received
+                                required:
+                                    - data
+                                    - datacontenttype
+                                    - id
+                                    - source
+                                    - specversion
+                                    - subject
+                                    - time
+                                    - type
+                                description: The ping-received event.
+                                additionalProperties: false
+                "503":
+                    description: The server is currently not available.
+    /put-into-read-only-mode:
+        post:
+            summary: Puts the database instance into read-only mode.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The database was put into read-only mode.
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /read-event-types:
+        post:
+            summary: Reads event types from the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The event types are being read from the database.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                eventType:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                                isPhantom:
+                                                    type: boolean
+                                                schema:
+                                                    type: object
+                                                    properties:
+                                                        properties:
+                                                            type: object
+                                                            additionalProperties: true
+                                                        type:
+                                                            const: object
+                                                    required:
+                                                        - type
+                                                        - properties
+                                                    additionalProperties: true
+                                                    examples:
+                                                        - additionalProperties: false
+                                                          properties:
+                                                            someInt:
+                                                                type: integer
+                                                                examples:
+                                                                    - 42
+                                                            someNumber:
+                                                                type: number
+                                                                examples:
+                                                                    - 3.14
+                                                            someObject:
+                                                                type: object
+                                                                properties:
+                                                                    someBoolean:
+                                                                        type: boolean
+                                                                additionalProperties: true
+                                                            someString:
+                                                                type: string
+                                                                examples:
+                                                                    - someValue
+                                                          required:
+                                                            - someString
+                                                            - someInt
+                                                            - someNumber
+                                                          type: object
+                                            required:
+                                                - eventType
+                                                - isPhantom
+                                            additionalProperties: false
+                                        type:
+                                            const: eventType
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An event type was read from the database.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                error:
+                                                    type: string
+                                                    minLength: 1
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while reading the event types from the database.
+                                      additionalProperties: false
+                "401":
+                    description: The request was not authorized.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /read-events:
+        post:
+            summary: Reads events from the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                options:
+                                    type: object
+                                    properties:
+                                        fromLatestEvent:
+                                            type: object
+                                            properties:
+                                                ifEventIsMissing:
+                                                    type: string
+                                                    enum:
+                                                        - read-everything
+                                                        - read-nothing
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                type:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            required:
+                                                - subject
+                                                - type
+                                                - ifEventIsMissing
+                                            additionalProperties: false
+                                        lowerBound:
+                                            type: object
+                                            properties:
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "0"
+                                                        - "1"
+                                                        - "2"
+                                                    pattern: ^\d+$
+                                                type:
+                                                    type: string
+                                                    enum:
+                                                        - inclusive
+                                                        - exclusive
+                                            required:
+                                                - id
+                                                - type
+                                            additionalProperties: false
+                                        order:
+                                            type: string
+                                            enum:
+                                                - chronological
+                                                - antichronological
+                                        recursive:
+                                            type: boolean
+                                        upperBound:
+                                            type: object
+                                            properties:
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "9223372036854775807"
+                                                    pattern: ^\d+$
+                                                type:
+                                                    type: string
+                                                    enum:
+                                                        - inclusive
+                                                        - exclusive
+                                            required:
+                                                - id
+                                                - type
+                                            additionalProperties: false
+                                    required:
+                                        - recursive
+                                    additionalProperties: false
+                                subject:
+                                    type: string
+                                    examples:
+                                        - /some/subject
+                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                            required:
+                                - subject
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The events are being read from the database.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                data:
+                                                    type: object
+                                                    additionalProperties: true
+                                                    examples:
+                                                        - someInt: 42
+                                                          someNumber: 3.14
+                                                          someObject:
+                                                            someBoolean: true
+                                                          someString: someValue
+                                                datacontenttype:
+                                                    const: application/json
+                                                hash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                id:
+                                                    type: string
+                                                    examples:
+                                                        - "0"
+                                                        - "1"
+                                                        - "2"
+                                                    pattern: ^\d+$
+                                                predecessorhash:
+                                                    type: string
+                                                    pattern: ^[a-fA-F0-9]{64}$
+                                                source:
+                                                    type: string
+                                                    format: uri
+                                                specversion:
+                                                    const: "1.0"
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                time:
+                                                    type: string
+                                                    format: date-time
+                                                traceparent:
+                                                    type: string
+                                                    examples:
+                                                        - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                                    pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                                tracestate:
+                                                    type: string
+                                                    examples:
+                                                        - some-number=31092,some-string=foo
+                                                    pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                                type:
+                                                    type: string
+                                                    examples:
+                                                        - com.example.event-type
+                                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            required:
+                                                - data
+                                                - datacontenttype
+                                                - hash
+                                                - id
+                                                - predecessorhash
+                                                - source
+                                                - specversion
+                                                - subject
+                                                - time
+                                                - type
+                                            additionalProperties: false
+                                        type:
+                                            const: event
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An event was read from the database.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                error:
+                                                    type: string
+                                                    minLength: 1
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while reading the events from the database.
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "409":
+                    description: The request caused a conflict.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /read-subjects:
+        post:
+            summary: Reads subjects from the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                baseSubject:
+                                    type: string
+                                    examples:
+                                        - /some/subject
+                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                            required:
+                                - baseSubject
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The subjects are being read from the database.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                subject:
+                                                    type: string
+                                                    examples:
+                                                        - /some/subject
+                                                    pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                            required:
+                                                - subject
+                                            additionalProperties: false
+                                        type:
+                                            const: subject
+                                      required:
+                                        - type
+                                        - payload
+                                      description: A subject was read from the database.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                error:
+                                                    type: string
+                                                    minLength: 1
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while reading the subjects from the database.
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /register-event-schema:
+        post:
+            summary: Registers a schema for an event type in the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                eventType:
+                                    type: string
+                                    examples:
+                                        - com.example.event-type
+                                    pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                schema:
+                                    type: object
+                                    properties:
+                                        properties:
+                                            type: object
+                                            additionalProperties: true
+                                        type:
+                                            const: object
+                                    required:
+                                        - type
+                                        - properties
+                                    additionalProperties: true
+                                    examples:
+                                        - additionalProperties: false
+                                          properties:
+                                            someInt:
+                                                type: integer
+                                                examples:
+                                                    - 42
+                                            someNumber:
+                                                type: number
+                                                examples:
+                                                    - 3.14
+                                            someObject:
+                                                type: object
+                                                properties:
+                                                    someBoolean:
+                                                        type: boolean
+                                                additionalProperties: true
+                                            someString:
+                                                type: string
+                                                examples:
+                                                    - someValue
+                                          required:
+                                            - someString
+                                            - someInt
+                                            - someNumber
+                                          type: object
+                            required:
+                                - eventType
+                                - schema
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The schema for the event type was registered in the database.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        type: object
+                                        properties:
+                                            eventType:
+                                                type: string
+                                                examples:
+                                                    - com.example.event-type
+                                                pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            schema:
+                                                type: object
+                                                properties:
+                                                    properties:
+                                                        type: object
+                                                        additionalProperties: true
+                                                    type:
+                                                        const: object
+                                                required:
+                                                    - type
+                                                    - properties
+                                                additionalProperties: true
+                                                examples:
+                                                    - additionalProperties: false
+                                                      properties:
+                                                        someInt:
+                                                            type: integer
+                                                            examples:
+                                                                - 42
+                                                        someNumber:
+                                                            type: number
+                                                            examples:
+                                                                - 3.14
+                                                        someObject:
+                                                            type: object
+                                                            properties:
+                                                                someBoolean:
+                                                                    type: boolean
+                                                            additionalProperties: true
+                                                        someString:
+                                                            type: string
+                                                            examples:
+                                                                - someValue
+                                                      required:
+                                                        - someString
+                                                        - someInt
+                                                        - someNumber
+                                                      type: object
+                                        required:
+                                            - eventType
+                                            - schema
+                                        additionalProperties: false
+                                    datacontenttype:
+                                        const: application/json
+                                    id:
+                                        type: string
+                                        examples:
+                                            - "1"
+                                            - "2"
+                                            - "3"
+                                            - "4"
+                                        pattern: ^\d+$
+                                    source:
+                                        const: https://www.eventsourcingdb.io
+                                    specversion:
+                                        const: "1.0"
+                                    subject:
+                                        const: /api/v1/register-event-schema
+                                    time:
+                                        type: string
+                                        format: date-time
+                                    type:
+                                        const: io.eventsourcingdb.api.event-schema-registered
+                                required:
+                                    - data
+                                    - datacontenttype
+                                    - id
+                                    - source
+                                    - specversion
+                                    - subject
+                                    - time
+                                    - type
+                                description: The event-type-registered event.
+                                additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "409":
+                    description: The request caused a conflict.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /restore:
+        post:
+            summary: Restores a database from a backup.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                description: A backup of a database.
+                content:
+                    application/x-ndjson:
+                        schema:
+                            oneOf:
+                                - type: object
+                                  properties:
+                                    payload:
+                                        type: object
+                                        properties:
+                                            data:
+                                                type: object
+                                                additionalProperties: true
+                                                examples:
+                                                    - someInt: 42
+                                                      someNumber: 3.14
+                                                      someObject:
+                                                        someBoolean: true
+                                                      someString: someValue
+                                            datacontenttype:
+                                                const: application/json
+                                            hash:
+                                                type: string
+                                                pattern: ^[a-fA-F0-9]{64}$
+                                            id:
+                                                type: string
+                                                examples:
+                                                    - "0"
+                                                    - "1"
+                                                    - "2"
+                                                pattern: ^\d+$
+                                            predecessorhash:
+                                                type: string
+                                                pattern: ^[a-fA-F0-9]{64}$
+                                            source:
+                                                type: string
+                                                format: uri
+                                            specversion:
+                                                const: "1.0"
+                                            subject:
+                                                type: string
+                                                examples:
+                                                    - /some/subject
+                                                pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                            time:
+                                                type: string
+                                                format: date-time
+                                            traceparent:
+                                                type: string
+                                                examples:
+                                                    - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                                pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                            tracestate:
+                                                type: string
+                                                examples:
+                                                    - some-number=31092,some-string=foo
+                                                pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                            type:
+                                                type: string
+                                                examples:
+                                                    - com.example.event-type
+                                                pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                        required:
+                                            - data
+                                            - datacontenttype
+                                            - hash
+                                            - id
+                                            - predecessorhash
+                                            - source
+                                            - specversion
+                                            - subject
+                                            - time
+                                            - type
+                                        additionalProperties: false
+                                    type:
+                                        const: event
+                                  required:
+                                    - type
+                                    - payload
+                                  additionalProperties: false
+                                - type: object
+                                  properties:
+                                    payload:
+                                        type: object
+                                        properties:
+                                            eventType:
+                                                type: string
+                                                examples:
+                                                    - com.example.event-type
+                                                pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                            schema:
+                                                type: object
+                                                properties:
+                                                    properties:
+                                                        type: object
+                                                        additionalProperties: true
+                                                    type:
+                                                        const: object
+                                                required:
+                                                    - type
+                                                    - properties
+                                                additionalProperties: true
+                                                examples:
+                                                    - additionalProperties: false
+                                                      properties:
+                                                        someInt:
+                                                            type: integer
+                                                            examples:
+                                                                - 42
+                                                        someNumber:
+                                                            type: number
+                                                            examples:
+                                                                - 3.14
+                                                        someObject:
+                                                            type: object
+                                                            properties:
+                                                                someBoolean:
+                                                                    type: boolean
+                                                            additionalProperties: true
+                                                        someString:
+                                                            type: string
+                                                            examples:
+                                                                - someValue
+                                                      required:
+                                                        - someString
+                                                        - someInt
+                                                        - someNumber
+                                                      type: object
+                                        required:
+                                            - eventType
+                                            - schema
+                                        additionalProperties: false
+                                    type:
+                                        const: schema
+                                  required:
+                                    - type
+                                    - payload
+                                  additionalProperties: false
+                                - type: object
+                                  properties:
+                                    payload:
+                                        type: string
+                                        minLength: 1
+                                    type:
+                                        const: error
+                                  required:
+                                    - type
+                                    - payload
+                                  additionalProperties: false
+            responses:
+                "200":
+                    description: The database was restored from the backup.
+                "401":
+                    description: The request was not authorized.
+                "503":
+                    description: The server is currently not available.
+    /run-eventql-query:
+        post:
+            summary: Runs an EventQL query on the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                query:
+                                    type: string
+                                    minLength: 1
+                                    examples:
+                                        - FROM e IN events ORDER BY e.time DESC TOP 100 PROJECT INTO e
+                            required:
+                                - query
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The EventQL query was run on the database.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            description: The projected value as described in the PROJECT INTO clause of the query, or an array in case of grouping.
+                                            additionalProperties: true
+                                            schema: AnyValue
+                                        type:
+                                            const: row
+                                      required:
+                                        - type
+                                        - payload
+                                      description: A projected line of the query result.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                endToken:
+                                                    type: object
+                                                    properties:
+                                                        column:
+                                                            type: integer
+                                                        line:
+                                                            type: integer
+                                                        text:
+                                                            type: string
+                                                        type:
+                                                            type: string
+                                                    required:
+                                                        - line
+                                                        - column
+                                                        - type
+                                                        - text
+                                                    additionalProperties: false
+                                                error:
+                                                    type: string
+                                                startToken:
+                                                    type: object
+                                                    properties:
+                                                        column:
+                                                            type: integer
+                                                        line:
+                                                            type: integer
+                                                        text:
+                                                            type: string
+                                                        type:
+                                                            type: string
+                                                    required:
+                                                        - line
+                                                        - column
+                                                        - type
+                                                        - text
+                                                    additionalProperties: false
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while querying the events from the database.
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /ui-settings:
+        get:
+            summary: Gets the UI settings.
+            tags:
+                - Status
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The UI settings were retrieved.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    isEventQlAiEnabled:
+                                        type: boolean
+                                required:
+                                    - isEventQlAiEnabled
+                                additionalProperties: false
+                "401":
+                    description: The request was not authorized.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /verify-api-token:
+        post:
+            summary: Verifies the API token.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The API token was verified.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    data:
+                                        type: object
+                                        additionalProperties: false
+                                    datacontenttype:
+                                        const: application/json
+                                    id:
+                                        type: string
+                                        examples:
+                                            - "1"
+                                            - "2"
+                                            - "3"
+                                            - "4"
+                                        pattern: ^\d+$
+                                    source:
+                                        const: https://www.eventsourcingdb.io
+                                    specversion:
+                                        const: "1.0"
+                                    subject:
+                                        const: /api/v1/verify-api-token
+                                    time:
+                                        type: string
+                                        format: date-time
+                                    type:
+                                        const: io.eventsourcingdb.api.api-token-verified
+                                required:
+                                    - data
+                                    - datacontenttype
+                                    - id
+                                    - source
+                                    - specversion
+                                    - subject
+                                    - time
+                                    - type
+                                description: The api-token-verified event.
+                                additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /verify-store:
+        post:
+            summary: Verifies the database.
+            tags:
+                - Management
+            security:
+                - BearerAuth: []
+            responses:
+                "200":
+                    description: The database was verified.
+                    content:
+                        application/x-ndjson:
+                            schema:
+                                oneOf:
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            additionalProperties: false
+                                        type:
+                                            const: heartbeat
+                                      required:
+                                        - type
+                                        - payload
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        payload:
+                                            type: object
+                                            properties:
+                                                error:
+                                                    type: string
+                                                    minLength: 1
+                                            required:
+                                                - error
+                                            additionalProperties: false
+                                        type:
+                                            const: error
+                                      required:
+                                        - type
+                                        - payload
+                                      description: An error occurred while verifying the database.
+                                      additionalProperties: false
+                                    - type: object
+                                      properties:
+                                        errors:
+                                            type: array
+                                            items:
+                                                type: string
+                                        warnings:
+                                            type: array
+                                            items:
+                                                type: string
+                                      required:
+                                        - errors
+                                        - warnings
+                                      additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+    /write-events:
+        post:
+            summary: Writes events to the database.
+            tags:
+                - Data
+            security:
+                - BearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                events:
+                                    type: array
+                                    items:
+                                        type: object
+                                        properties:
+                                            data:
+                                                type: object
+                                                additionalProperties: true
+                                                examples:
+                                                    - someInt: 42
+                                                      someNumber: 3.14
+                                                      someObject:
+                                                        someBoolean: true
+                                                      someString: someValue
+                                            source:
+                                                type: string
+                                                format: uri
+                                            subject:
+                                                type: string
+                                                examples:
+                                                    - /some/subject
+                                                pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                            traceparent:
+                                                type: string
+                                                examples:
+                                                    - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                                pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                            tracestate:
+                                                type: string
+                                                examples:
+                                                    - some-number=31092,some-string=foo
+                                                pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                            type:
+                                                type: string
+                                                examples:
+                                                    - com.example.event-type
+                                                pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                        required:
+                                            - source
+                                            - subject
+                                            - type
+                                            - data
+                                        additionalProperties: false
+                                    minItems: 1
+                                preconditions:
+                                    type: array
+                                    items:
+                                        oneOf:
+                                            - type: object
+                                              properties:
+                                                payload:
+                                                    type: object
+                                                    properties:
+                                                        subject:
+                                                            type: string
+                                                            examples:
+                                                                - /some/subject
+                                                            pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                    required:
+                                                        - subject
+                                                    additionalProperties: false
+                                                type:
+                                                    const: isSubjectPristine
+                                              required:
+                                                - type
+                                                - payload
+                                              additionalProperties: false
+                                            - type: object
+                                              properties:
+                                                payload:
+                                                    type: object
+                                                    properties:
+                                                        eventId:
+                                                            type: string
+                                                            examples:
+                                                                - "1"
+                                                                - "2"
+                                                                - "3"
+                                                                - "4"
+                                                            pattern: ^\d+$
+                                                        subject:
+                                                            type: string
+                                                            examples:
+                                                                - /some/subject
+                                                            pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                                    required:
+                                                        - subject
+                                                        - eventId
+                                                    additionalProperties: false
+                                                type:
+                                                    const: isSubjectOnEventId
+                                              required:
+                                                - type
+                                                - payload
+                                              additionalProperties: false
+                            required:
+                                - events
+                            additionalProperties: false
+            responses:
+                "200":
+                    description: The events were written to the database.
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    type: object
+                                    properties:
+                                        data:
+                                            type: object
+                                            additionalProperties: true
+                                            examples:
+                                                - someInt: 42
+                                                  someNumber: 3.14
+                                                  someObject:
+                                                    someBoolean: true
+                                                  someString: someValue
+                                        datacontenttype:
+                                            const: application/json
+                                        hash:
+                                            type: string
+                                            pattern: ^[a-fA-F0-9]{64}$
+                                        id:
+                                            type: string
+                                            examples:
+                                                - "0"
+                                                - "1"
+                                                - "2"
+                                            pattern: ^\d+$
+                                        predecessorhash:
+                                            type: string
+                                            pattern: ^[a-fA-F0-9]{64}$
+                                        source:
+                                            type: string
+                                            format: uri
+                                        specversion:
+                                            const: "1.0"
+                                        subject:
+                                            type: string
+                                            examples:
+                                                - /some/subject
+                                            pattern: ^/([0-9A-Za-z_-]+/)*([0-9A-Za-z_-]+/?)?$
+                                        time:
+                                            type: string
+                                            format: date-time
+                                        traceparent:
+                                            type: string
+                                            examples:
+                                                - 00-4bf92f3577b34da6a3ce929d0e0e4736-4bf92f3577b34da6-01
+                                            pattern: ^00-([a-f0-9]{32})-([a-f0-9]{16})-(0[01])$
+                                        tracestate:
+                                            type: string
+                                            examples:
+                                                - some-number=31092,some-string=foo
+                                            pattern: ^([a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})(,[a-z0-9_@-]{1,256}=[a-zA-Z0-9._-]{1,256})*$
+                                        type:
+                                            type: string
+                                            examples:
+                                                - com.example.event-type
+                                            pattern: ^[0-9A-Za-z_-]{2,}.([0-9A-Za-z_-]+.)+[0-9A-Za-z_-]+$
+                                    required:
+                                        - data
+                                        - datacontenttype
+                                        - hash
+                                        - id
+                                        - predecessorhash
+                                        - source
+                                        - specversion
+                                        - subject
+                                        - time
+                                        - type
+                                    additionalProperties: false
+                "400":
+                    description: The request was invalid.
+                "401":
+                    description: The request was not authorized.
+                "409":
+                    description: The request caused a conflict.
+                "413":
+                    description: The request body was too large.
+                "500":
+                    description: The request caused an internal server error.
+                "503":
+                    description: The server is currently not available.
+                "507":
+                    description: The events could not be written to the database.
+components:
+    securitySchemes:
+        BearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT

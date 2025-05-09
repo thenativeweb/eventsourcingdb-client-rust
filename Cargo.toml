@@ -9,7 +9,7 @@ testcontainer = ["dep:testcontainers"]
 cloudevents = ["dep:cloudevents-sdk"]
 
 [dependencies]
-reqwest = { version = "0.12.15", features = ["json"] }
+reqwest = { version = "0.12.15", features = ["json", "stream"] }
 thiserror = "2.0.12"
 url = "2.5.4"
 testcontainers = { version = "0.24.0", features = ["http_wait"], optional = true }
@@ -18,6 +18,10 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 typed-builder = "0.21.0"
 time = { version = "0.3.41", features = ["formatting", "parsing", "serde", "std"] }
+tokio = "1.44.2"
+tokio-stream = { version = "0.1.17", features = ["io-util"] }
+tokio-util = "0.7.15"
+futures = "0.3.31"
 
 [dev-dependencies]
 testcontainers = "0.24.0"
