@@ -19,12 +19,12 @@
 
 mod client_request;
 
-use client_request::ClientRequest;
+use client_request::{ClientRequest, PingRequest, VerifyApiTokenRequest};
 
 use reqwest;
 use url::Url;
 
-use crate::{error::ClientError, event::ManagementEvent};
+use crate::error::ClientError;
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -74,7 +74,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request(&self, endpoint: ClientRequest) -> Result<reqwest::Response, ClientError> {
+    async fn request<R: ClientRequest>(&self, endpoint: R) -> Result<R::Response, ClientError> {
         let url = self
             .base_url
             .join(endpoint.url_path())
@@ -86,7 +86,7 @@ impl Client {
             _ => return Err(ClientError::InvalidRequestMethod),
         }
         .header("Authorization", format!("Bearer {}", self.api_token));
-        let request = if let Some(body) = endpoint.json() {
+        let request = if let Some(body) = endpoint.body() {
             request
                 .header("Content-Type", "application/json")
                 .json(&body?)
@@ -97,7 +97,9 @@ impl Client {
         let response = request.send().await?;
 
         if response.status().is_success() {
-            Ok(response)
+            let result = response.json().await?;
+            endpoint.validate_response(&result)?;
+            Ok(result)
         } else {
             Err(ClientError::DBError(
                 response.status(),
@@ -107,7 +109,7 @@ impl Client {
     }
 
     /// Pings the DB instance to check if it is reachable.
-    /// 
+    ///
     /// ```
     /// # tokio_test::block_on(async {
     /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
@@ -123,17 +125,12 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let response = self.request(ClientRequest::Ping).await?;
-        if response.json::<ManagementEvent>().await?.ty() == "io.eventsourcingdb.api.ping-received"
-        {
-            Ok(())
-        } else {
-            Err(ClientError::PingFailed)
-        }
+        let _ = self.request(PingRequest).await?;
+        Ok(())
     }
 
     /// Verifies the API token by sending a request to the DB instance.
-    /// 
+    ///
     /// ```
     /// # tokio_test::block_on(async {
     /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
@@ -149,13 +146,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
-        let response = self.request(ClientRequest::VerifyApiToken).await?;
-        if response.json::<ManagementEvent>().await?.ty()
-            == "io.eventsourcingdb.api.api-token-verified"
-        {
-            Ok(())
-        } else {
-            Err(ClientError::APITokenInvalid)
-        }
+        let _ = self.request(VerifyApiTokenRequest).await?;
+        Ok(())
     }
 }
