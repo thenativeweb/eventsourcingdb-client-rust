@@ -19,12 +19,15 @@
 
 mod client_request;
 
-use client_request::{ClientRequest, PingRequest, VerifyApiTokenRequest};
+use client_request::{
+    list_event_types::EventType, ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest
+};
 
+use futures::Stream;
 use reqwest;
 use url::Url;
 
-use crate::error::ClientError;
+use crate::{error::ClientError, event::ManagementEvent};
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -72,9 +75,14 @@ impl Client {
 
     /// Utility function to request an endpoint of the API.
     ///
+    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request<R: ClientRequest>(&self, endpoint: R) -> Result<R::Response, ClientError> {
+    fn build_request<R: ClientRequest>(
+        &self,
+        endpoint: &R,
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
         let url = self
             .base_url
             .join(endpoint.url_path())
@@ -93,15 +101,49 @@ impl Client {
         } else {
             request
         };
+        Ok(request)
+    }
 
-        let response = request.send().await?;
+    /// Utility function to request an endpoint of the API as a oneshot.
+    ///
+    /// This means, that the response is not streamed, but returned as a single value.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    async fn request_oneshot<R: OneShotRequest>(
+        &self,
+        endpoint: R,
+    ) -> Result<R::Response, ClientError> {
+        let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
-            Err(ClientError::DBError(
+            Err(ClientError::DBApiError(
+                response.status(),
+                response.text().await.unwrap_or_default(),
+            ))
+        }
+    }
+
+    /// Utility function to request an endpoint of the API as a stream.
+    ///
+    /// This means, that the response is streamed and returned as a stream of values.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    async fn request_streaming<R: StreamingRequest>(
+        &self,
+        endpoint: R,
+    ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
+        let response = self.build_request(&endpoint)?.send().await?;
+
+        if response.status().is_success() {
+            Ok(endpoint.build_stream(response))
+        } else {
+            Err(ClientError::DBApiError(
                 response.status(),
                 response.text().await.unwrap_or_default(),
             ))
@@ -125,7 +167,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let _ = self.request(PingRequest).await?;
+        let _ = self.request_oneshot(PingRequest).await?;
         Ok(())
     }
 
@@ -146,7 +188,45 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
-        let _ = self.request(VerifyApiTokenRequest).await?;
+        let _ = self.request_oneshot(VerifyApiTokenRequest).await?;
         Ok(())
+    }
+
+    /// Registers an event schema with the DB instance.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the provided schema is invalid.
+    pub async fn register_event_schema(
+        &self,
+        event_type: &str,
+        schema: &serde_json::Value,
+    ) -> Result<ManagementEvent, ClientError> {
+        self.request_oneshot(RegisterEventSchemaRequest::try_new(event_type, schema)?)
+            .await
+    }
+
+    /// List all subjects in the DB instance.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn list_subjects(
+        &self,
+        base_subject: Option<&str>,
+    ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
+        let response = self
+            .request_streaming(ListSubjectsRequest { base_subject })
+            .await?;
+        Ok(response)
+    }
+
+    /// List all event types in the DB instance.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn list_event_types(
+        &self,
+    ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
+        let response = self.request_streaming(ListEventTypesRequest).await?;
+        Ok(response)
     }
 }

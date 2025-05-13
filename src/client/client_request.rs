@@ -1,15 +1,31 @@
 //! This is a purely internal module to represent client requests to the database.
 
-use reqwest::Method;
-use serde_json::Value;
+pub mod list_event_types;
+mod list_subjects;
+mod ping;
+mod register_event_schema;
+mod verify_api_token;
 
-use crate::{error::ClientError, event::ManagementEvent};
+pub use list_event_types::ListEventTypesRequest;
+pub use list_subjects::ListSubjectsRequest;
+pub use ping::PingRequest;
+pub use register_event_schema::RegisterEventSchemaRequest;
+pub use verify_api_token::VerifyApiTokenRequest;
+
+use crate::error::ClientError;
+use futures::{Stream, stream::TryStreamExt};
+use futures_util::io;
+use reqwest::Method;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_stream::wrappers::LinesStream;
+use tokio_util::io::StreamReader;
 
 /// Represents a request to the database client
 pub trait ClientRequest {
     const URL_PATH: &'static str;
     const METHOD: Method;
-    type Response: serde::de::DeserializeOwned;
 
     /// Returns the URL path for the request
     fn url_path(&self) -> &'static str {
@@ -22,9 +38,14 @@ pub trait ClientRequest {
     }
 
     /// Returns the body for the request
-    fn body(&self) -> Option<Result<Value, ClientError>> {
-        None
+    fn body(&self) -> Option<Result<impl Serialize, ClientError>> {
+        None::<Result<(), _>>
     }
+}
+
+/// Represents a request to the database that expects a single response
+pub trait OneShotRequest: ClientRequest {
+    type Response: DeserializeOwned;
 
     /// Validate the response from the database
     fn validate_response(&self, _response: &Self::Response) -> Result<(), ClientError> {
@@ -32,34 +53,25 @@ pub trait ClientRequest {
     }
 }
 
-/// Ping the Database instance
-#[derive(Debug, Clone, Copy)]
-pub struct PingRequest;
+/// Represents a request to the database that expects a stream of responses
+pub trait StreamingRequest: ClientRequest {
+    type ItemType: DeserializeOwned;
 
-impl ClientRequest for PingRequest {
-    const URL_PATH: &'static str = "/api/v1/ping";
-    const METHOD: Method = Method::GET;
-    type Response = ManagementEvent;
+    fn build_stream(
+        self,
+        response: reqwest::Response,
+    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>>;
 
-    fn validate_response(&self, response: &Self::Response) -> Result<(), ClientError> {
-        (response.ty() == "io.eventsourcingdb.api.ping-received")
-            .then_some(())
-            .ok_or(ClientError::PingFailed)
-    }
-}
-
-/// Verify the API token
-#[derive(Debug, Clone, Copy)]
-pub struct VerifyApiTokenRequest;
-
-impl ClientRequest for VerifyApiTokenRequest {
-    const URL_PATH: &'static str = "/api/v1/verify-api-token";
-    const METHOD: Method = Method::POST;
-    type Response = ManagementEvent;
-
-    fn validate_response(&self, response: &Self::Response) -> Result<(), ClientError> {
-        (response.ty() == "io.eventsourcingdb.api.api-token-verified")
-            .then_some(())
-            .ok_or(ClientError::APITokenInvalid)
+    fn lines_stream(
+        response: reqwest::Response,
+    ) -> impl Stream<Item = Result<String, ClientError>> {
+        let bytes = response.bytes_stream().map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to read response stream: {err}"),
+            )
+        });
+        let stream_reader = StreamReader::new(bytes);
+        LinesStream::new(BufReader::new(stream_reader).lines()).map_err(ClientError::from)
     }
 }

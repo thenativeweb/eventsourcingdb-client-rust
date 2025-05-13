@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![allow(clippy::needless_lifetimes)]
 #![deny(
     ambiguous_negative_literals,
     clippy::pedantic,
