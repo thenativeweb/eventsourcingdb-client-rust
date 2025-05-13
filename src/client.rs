@@ -20,7 +20,9 @@
 mod client_request;
 
 use client_request::{
-    list_event_types::EventType, ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest
+    ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
+    RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest,
+    list_event_types::EventType,
 };
 
 use futures::Stream;
@@ -214,7 +216,9 @@ impl Client {
         base_subject: Option<&str>,
     ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
         let response = self
-            .request_streaming(ListSubjectsRequest { base_subject })
+            .request_streaming(ListSubjectsRequest {
+                base_subject: base_subject.unwrap_or("/"),
+            })
             .await?;
         Ok(response)
     }

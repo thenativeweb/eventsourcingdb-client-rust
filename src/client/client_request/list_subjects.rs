@@ -9,7 +9,7 @@ use super::{ClientRequest, StreamingRequest};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListSubjectsRequest<'a> {
-    pub base_subject: Option<&'a str>,
+    pub base_subject: &'a str,
 }
 
 impl<'a> ClientRequest for ListSubjectsRequest<'a> {
