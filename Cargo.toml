@@ -5,16 +5,23 @@ edition = "2024"
 
 [features]
 default = []
+cloudevents = ["dep:cloudevents-sdk"]
 testcontainer = ["dep:testcontainers"]
 
 [dependencies]
-thiserror = "2.0.12"
+chrono = { version = "0.4.41", features = ["serde"] }
+cloudevents-sdk = { version = "0.8.0", features = ["reqwest"], optional = true }
 url = "2.5.4"
-testcontainers = { version = "0.24.0", features = ["http_wait"], optional = true }
+reqwest = { version = "0.12.15", features = ["json"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+testcontainers = { version = "0.24.0", features = [
+  "http_wait",
+], optional = true }
+thiserror = "2.0.12"
 
 [dev-dependencies]
-eventsourcingdb-client-rust = {path = ".", features = ["testcontainer"]}
-reqwest = "0.12.15"
+eventsourcingdb-client-rust = { path = ".", features = ["testcontainer"] }
 testcontainers = { version = "0.24.0", features = ["http_wait"] }
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-test = "0.4.4"

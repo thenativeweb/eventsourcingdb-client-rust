@@ -25,14 +25,13 @@ async fn db_is_reachable() {
     reqwest::Client::new().get(ping_url).send().await.unwrap();
 }
 
-// TODO!: Uncomment this test when the client is available
-// #[tokio::test]
-// async fn generate_client() {
-//     let c = Container::start_default().await.unwrap();
-//     let generated_client = c.get_client().await.unwrap();
-//     let base_url = c.get_base_url().await.unwrap();
-//     let api_token = c.get_api_token();
-//     let client = eventsourcingdb_client_rust::client::Client::new(base_url, api_token);
-//     assert_eq!(client.get_base_url(), generated_client.get_base_url());
-//     assert_eq!(client.get_api_token(), generated_client.get_api_token());
-// }
+#[tokio::test]
+async fn generate_client() {
+    let c = Container::start_default().await.unwrap();
+    let generated_client = c.get_client().await.unwrap();
+    let base_url = c.get_base_url().await.unwrap();
+    let api_token = c.get_api_token();
+    let client = eventsourcingdb_client_rust::client::Client::new(base_url, api_token);
+    assert_eq!(client.get_base_url(), generated_client.get_base_url());
+    assert_eq!(client.get_api_token(), generated_client.get_api_token());
+}

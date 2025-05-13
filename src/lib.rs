@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 #![deny(
     ambiguous_negative_literals,
     clippy::pedantic,
@@ -15,6 +14,8 @@
     warnings
 )]
 
-pub mod error;
+pub mod client;
 #[cfg(feature = "testcontainer")]
 pub mod container;
+pub mod error;
+pub mod event;
