@@ -26,7 +26,7 @@ pub enum ClientError {
     SerdeJsonError(#[from] serde_json::Error),
     /// The DB returned an error+
     #[error("The DB returned an error: {0}")]
-    DBError(StatusCode, String),
+    DBApiError(StatusCode, String),
     /// There was a problem with the `cloudevents` message
     #[cfg(feature = "cloudevents")]
     #[error("The CloudEvents message is invalid: {0}")]

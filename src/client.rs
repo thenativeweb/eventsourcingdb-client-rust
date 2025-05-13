@@ -20,7 +20,9 @@
 mod client_request;
 mod precondition;
 
-use client_request::{ClientRequest, PingRequest, VerifyApiTokenRequest, WriteEvents};
+use client_request::{
+    ClientRequest, OneShotRequest, PingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+};
 
 pub use precondition::Precondition;
 use reqwest;
@@ -77,9 +79,14 @@ impl Client {
 
     /// Utility function to request an endpoint of the API.
     ///
+    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request<R: ClientRequest>(&self, endpoint: R) -> Result<R::Response, ClientError> {
+    fn build_request<R: ClientRequest>(
+        &self,
+        endpoint: &R,
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
         let url = self
             .base_url
             .join(endpoint.url_path())
@@ -98,15 +105,27 @@ impl Client {
         } else {
             request
         };
+        Ok(request)
+    }
 
-        let response = request.send().await?;
+    /// Utility function to request an endpoint of the API as a oneshot.
+    ///
+    /// This means, that the response is not streamed, but returned as a single value.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    async fn request_oneshot<R: OneShotRequest>(
+        &self,
+        endpoint: R,
+    ) -> Result<R::Response, ClientError> {
+        let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
-            Err(ClientError::DBError(
+            Err(ClientError::DBApiError(
                 response.status(),
                 response.text().await.unwrap_or_default(),
             ))
@@ -130,7 +149,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let _ = self.request(PingRequest).await?;
+        let _ = self.request_oneshot(PingRequest).await?;
         Ok(())
     }
 
@@ -151,7 +170,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
-        let _ = self.request(VerifyApiTokenRequest).await?;
+        let _ = self.request_oneshot(VerifyApiTokenRequest).await?;
         Ok(())
     }
 
@@ -186,7 +205,7 @@ impl Client {
         events: Vec<EventCandidate>,
         preconditions: Vec<Precondition>,
     ) -> Result<Vec<Event>, ClientError> {
-        self.request(WriteEvents {
+        self.request_oneshot(WriteEventsRequest {
             events,
             preconditions,
         })
