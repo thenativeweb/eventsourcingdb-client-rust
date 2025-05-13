@@ -1,9 +1,14 @@
 //! This is a purely internal module to represent client requests to the database.
 
 use reqwest::Method;
-use serde_json::Value;
+use serde::Serialize;
 
-use crate::{error::ClientError, event::ManagementEvent};
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate, ManagementEvent},
+};
+
+use super::precondition::Precondition;
 
 /// Represents a request to the database client
 pub trait ClientRequest {
@@ -22,8 +27,8 @@ pub trait ClientRequest {
     }
 
     /// Returns the body for the request
-    fn body(&self) -> Option<Result<Value, ClientError>> {
-        None
+    fn body(&self) -> Option<Result<impl Serialize, ClientError>> {
+        None::<Result<(), ClientError>>
     }
 
     /// Validate the response from the database
@@ -61,5 +66,21 @@ impl ClientRequest for VerifyApiTokenRequest {
         (response.ty() == "io.eventsourcingdb.api.api-token-verified")
             .then_some(())
             .ok_or(ClientError::APITokenInvalid)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriteEvents {
+    pub events: Vec<EventCandidate>,
+    pub preconditions: Vec<Precondition>,
+}
+
+impl ClientRequest for WriteEvents {
+    const URL_PATH: &'static str = "/api/v1/write-events";
+    const METHOD: Method = Method::POST;
+    type Response = Vec<Event>;
+
+    fn body(&self) -> Option<Result<impl Serialize, ClientError>> {
+        Some(Ok(self))
     }
 }

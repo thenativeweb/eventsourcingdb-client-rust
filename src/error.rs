@@ -46,3 +46,12 @@ pub enum ContainerError {
     #[error("URL parsing error: {0}")]
     URLParseError(#[from] url::ParseError),
 }
+
+/// Error type for the event
+#[derive(Debug, thiserror::Error)]
+pub enum EventError {
+    /// The passed cloudevent is invalid
+    #[cfg(feature = "cloudevents")]
+    #[error("The passed cloudevent is invalid")]
+    InvalidCloudevent,
+}
