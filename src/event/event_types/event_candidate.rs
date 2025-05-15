@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
+use crate::event::trace_info::TraceInfo;
 
-use super::TraceInfo;
 #[cfg(feature = "cloudevents")]
 use crate::error::EventError;
 
