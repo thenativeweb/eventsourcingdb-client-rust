@@ -1,4 +1,6 @@
 #![doc = include_str!("../README.md")]
+// There is a known bug in clippy:
+// https://github.com/rust-lang/rust-clippy/issues/12908
 #![allow(clippy::needless_lifetimes)]
 #![deny(
     ambiguous_negative_literals,
