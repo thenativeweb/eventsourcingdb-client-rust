@@ -24,7 +24,6 @@ impl<'a> StreamingRequest for ListSubjectsRequest<'a> {
     type ItemType = String;
 
     fn build_stream(
-        self,
         response: reqwest::Response,
     ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
         #[derive(Deserialize, Debug)]
