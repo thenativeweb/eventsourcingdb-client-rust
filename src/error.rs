@@ -30,12 +30,12 @@ pub enum ClientError {
     /// There was a problem with the JSON serialization
     #[error("The JSON serialization failed: {0}")]
     SerdeJsonError(#[from] serde_json::Error),
-    /// The DB returned an error
-    #[error("The DB returned an error: {0}")]
-    DBApiError(StatusCode, String),
     /// The DB returned an error in the response
     #[error("The DB returned an error in the response: {0}")]
     DBError(String),
+    /// The DB returned an error
+    #[error("The DB returned an error: {0}")]
+    DBApiError(StatusCode, String),
     // check if this can hold a validation error in the future
     /// The passed jsonschema is invalid
     #[error("The passed jsonschema is invalid")]
@@ -58,4 +58,13 @@ pub enum ContainerError {
     /// This error should never happen. If you experience this error, please let us know as it's likely a bug in the SDK.
     #[error("URL parsing error: {0}")]
     URLParseError(#[from] url::ParseError),
+}
+
+/// Error type for the event
+#[derive(Debug, thiserror::Error)]
+pub enum EventError {
+    /// The passed cloudevent is invalid
+    #[cfg(feature = "cloudevents")]
+    #[error("The passed cloudevent is invalid")]
+    InvalidCloudevent,
 }

@@ -18,18 +18,23 @@
 //! If this works, it means that the client is correctly configured and you can use it to make requests to the DB.
 
 mod client_request;
+mod precondition;
 
 use client_request::{
     ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
-    RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest,
+    RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
     list_event_types::EventType,
 };
 
 use futures::Stream;
+pub use precondition::Precondition;
 use reqwest;
 use url::Url;
 
-use crate::{error::ClientError, event::ManagementEvent};
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate, ManagementEvent},
+};
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -76,6 +81,8 @@ impl Client {
     }
 
     /// Utility function to request an endpoint of the API.
+    ///
+    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
     ///
     /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
     ///
@@ -232,5 +239,43 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
         let response = self.request_streaming(ListEventTypesRequest).await?;
         Ok(response)
+    }
+
+    /// Writes events to the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let candidates = vec![
+    ///     EventCandidate::builder()
+    ///        .source("https://www.eventsourcingdb.io".to_string())
+    ///        .data(json!({"value": 1}))
+    ///        .subject("/test".to_string())
+    ///        .r#type("io.eventsourcingdb.test".to_string())
+    ///        .build()
+    /// ];
+    /// let written_events = client.write_events(candidates, vec![]).await.expect("Failed to write events");
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn write_events(
+        &self,
+        events: Vec<EventCandidate>,
+        preconditions: Vec<Precondition>,
+    ) -> Result<Vec<Event>, ClientError> {
+        self.request_oneshot(WriteEventsRequest {
+            events,
+            preconditions,
+        })
+        .await
     }
 }

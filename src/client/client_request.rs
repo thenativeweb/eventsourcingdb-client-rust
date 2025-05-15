@@ -5,12 +5,14 @@ mod list_subjects;
 mod ping;
 mod register_event_schema;
 mod verify_api_token;
+mod write_events;
 
 pub use list_event_types::ListEventTypesRequest;
 pub use list_subjects::ListSubjectsRequest;
 pub use ping::PingRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
 pub use verify_api_token::VerifyApiTokenRequest;
+pub use write_events::WriteEventsRequest;
 
 use crate::error::ClientError;
 use futures::{Stream, stream::TryStreamExt};
