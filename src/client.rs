@@ -20,21 +20,19 @@
 mod client_request;
 mod precondition;
 
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate, ManagementEvent},
+};
 use client_request::{
     ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
     RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
     list_event_types::EventType,
 };
-
 use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
 use url::Url;
-
-use crate::{
-    error::ClientError,
-    event::{Event, EventCandidate, ManagementEvent},
-};
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -81,8 +79,6 @@ impl Client {
     }
 
     /// Utility function to request an endpoint of the API.
-    ///
-    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
     ///
     /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
     ///
@@ -203,6 +199,34 @@ impl Client {
 
     /// Registers an event schema with the DB instance.
     ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let event_type = "io.eventsourcingdb.test";
+    /// let schema = json!({
+    ///     "type": "object",
+    ///     "properties": {
+    ///         "id": {
+    ///             "type": "string"
+    ///         },
+    ///         "name": {
+    ///             "type": "string"
+    ///         }
+    ///     },
+    ///     "required": ["id", "name"]
+    /// });
+    /// client.register_event_schema(event_type, &schema).await.expect("Failed to list event types");
+    /// # })
+    /// ```
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the provided schema is invalid.
     pub async fn register_event_schema(
@@ -215,6 +239,44 @@ impl Client {
     }
 
     /// List all subjects in the DB instance.
+    ///
+    /// To get all subjects in the DB, just pass `None` as the `base_subject`.
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut subject_stream = client.list_subjects(None).await.expect("Failed to list event types");
+    /// while let Some(subject) = subject_stream.next().await {
+    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// To get all subjects under /test in the DB, just pass `Some("/test")` as the `base_subject`.
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut subject_stream = client.list_subjects(Some("/test")).await.expect("Failed to list event types");
+    /// while let Some(subject) = subject_stream.next().await {
+    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    /// }
+    /// # })
+    /// ```
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
@@ -232,6 +294,24 @@ impl Client {
 
     /// List all event types in the DB instance.
     ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut type_stream = client.list_event_types().await.expect("Failed to list event types");
+    /// while let Some(ty) = type_stream.next().await {
+    ///     println!("Found Type {}", ty.expect("Error while reading types").name);
+    /// }
+    /// # })
+    /// ```
+    /// 
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn list_event_types(
