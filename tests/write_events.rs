@@ -1,9 +1,7 @@
 mod utils;
 
 use eventsourcingdb_client_rust::{
-    client::Precondition,
-    container::Container,
-    event::{EventCandidate, TraceInfo},
+    client::Precondition, container::Container, event::{EventCandidate, TraceInfo}
 };
 use serde_json::json;
 use utils::{
@@ -48,9 +46,11 @@ async fn write_event_with_is_pristine_condition_on_empty_subject() {
     let result = client
         .write_events(
             vec![event_candidate.clone()],
-            vec![Precondition::IsSubjectPristine {
-                subject: event_candidate.subject.clone(),
-            }],
+            vec![
+                Precondition::IsSubjectPristine {
+                    subject: event_candidate.subject.clone(),
+                },
+            ],
         )
         .await;
     assert!(result.is_ok(), "Failed to write events: {:?}", result);
@@ -74,9 +74,11 @@ async fn write_event_with_is_pristine_condition_on_non_empty_subject() {
     let result = client
         .write_events(
             vec![event_candidate.clone()],
-            vec![Precondition::IsSubjectPristine {
-                subject: event_candidate.subject.clone(),
-            }],
+            vec![
+                Precondition::IsSubjectPristine {
+                    subject: event_candidate.subject.clone(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);
@@ -94,9 +96,11 @@ async fn write_events_with_is_pristine_condition_on_empty_subject() {
     let result = client
         .write_events(
             event_candidates.clone(),
-            vec![Precondition::IsSubjectPristine {
-                subject: event_candidates[1].subject.clone(),
-            }],
+            vec![
+                Precondition::IsSubjectPristine {
+                    subject: event_candidates[1].subject.clone(),
+                },
+            ],
         )
         .await;
     assert!(result.is_ok(), "Failed to write events: {:?}", result);
@@ -121,9 +125,11 @@ async fn write_events_with_is_pristine_condition_on_non_empty_subject() {
     let result = client
         .write_events(
             event_candidates,
-            vec![Precondition::IsSubjectPristine {
-                subject: fill_event_candidate.subject.clone(),
-            }],
+            vec![
+                Precondition::IsSubjectPristine {
+                    subject: fill_event_candidate.subject.clone(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);
@@ -138,10 +144,12 @@ async fn write_event_with_is_subject_on_event_id_condition_on_empty_subject() {
     let result = client
         .write_events(
             vec![event_candidate.clone()],
-            vec![Precondition::IsSubjectOnEventId {
-                subject: event_candidate.subject.clone(),
-                event_id: "100".to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: event_candidate.subject.clone(),
+                    event_id: "100".to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);
@@ -162,10 +170,12 @@ async fn write_event_with_is_subject_on_event_id_condition_on_non_empty_subject_
     let result = client
         .write_events(
             vec![event_candidate.clone()],
-            vec![Precondition::IsSubjectOnEventId {
-                subject: event_candidate.subject.clone(),
-                event_id: written.id().to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: event_candidate.subject.clone(),
+                    event_id: written.id().to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_ok(), "Writing the event failed: {:?}", result);
@@ -186,10 +196,12 @@ async fn write_event_with_is_subject_on_event_id_condition_on_non_empty_subject_
     let result = client
         .write_events(
             vec![event_candidate.clone()],
-            vec![Precondition::IsSubjectOnEventId {
-                subject: event_candidate.subject.clone(),
-                event_id: 100.to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: event_candidate.subject.clone(),
+                    event_id: 100.to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);
@@ -207,10 +219,12 @@ async fn write_events_with_is_subject_on_event_id_condition_on_empty_subject() {
     let result = client
         .write_events(
             event_candidates.clone(),
-            vec![Precondition::IsSubjectOnEventId {
-                subject: event_candidates[1].subject.clone(),
-                event_id: "100".to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: event_candidates[1].subject.clone(),
+                    event_id: "100".to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);
@@ -235,10 +249,12 @@ async fn write_events_with_is_subject_on_event_id_condition_on_non_empty_subject
     let result = client
         .write_events(
             event_candidates,
-            vec![Precondition::IsSubjectOnEventId {
-                subject: fill_event_candidate.subject.clone(),
-                event_id: written.id().to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: fill_event_candidate.subject.clone(),
+                    event_id: written.id().to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_ok(), "Writing the events failed: {:?}", result);
@@ -263,10 +279,12 @@ async fn write_events_with_is_subject_on_event_id_condition_on_non_empty_subject
     let result = client
         .write_events(
             event_candidates,
-            vec![Precondition::IsSubjectOnEventId {
-                subject: fill_event_candidate.subject.clone(),
-                event_id: 100.to_string(),
-            }],
+            vec![
+                Precondition::IsSubjectOnEventId {
+                    subject: fill_event_candidate.subject.clone(),
+                    event_id: 100.to_string(),
+                },
+            ],
         )
         .await;
     assert!(result.is_err(), "Expected an error, but got: {:?}", result);

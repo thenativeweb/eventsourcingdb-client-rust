@@ -18,10 +18,7 @@ async fn ping_unavailable_server_errors() {
 async fn verify_api_token() {
     let container = Container::start_default().await.unwrap();
     let client = container.get_client().await.unwrap();
-    client
-        .verify_api_token()
-        .await
-        .expect("Failed to verify API token");
+    client.verify_api_token().await.expect("Failed to verify API token");
 }
 
 #[tokio::test]

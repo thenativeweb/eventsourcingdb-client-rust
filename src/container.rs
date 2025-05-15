@@ -137,10 +137,10 @@ impl ContainerBuilder {
 }
 
 /// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
-///
+/// 
 /// Aside from managing the container, this struct also provides methods to get the data needed to connect to
 /// the database or even a fully configured client.
-///
+/// 
 /// You'll most likely want to use the [`Container::start_default`] method to create a new container instance for your tests.
 /// For more details, see the [`crate::container`] module documentation.
 /// ```
@@ -167,7 +167,7 @@ impl Container {
     }
 
     /// Shortcut method to start the container with default settings.
-    ///
+    /// 
     /// This is the same as calling [`Container::builder`] and then [`ContainerBuilder::start`].
     /// In most cases this will create a contaienr with the latest image tag and a working configuration.
     ///
@@ -178,7 +178,7 @@ impl Container {
     }
 
     /// Get the host of the container.
-    ///
+    /// 
     /// This is the host that you can use to connect to the database. In most cases this will be `localhost`.
     ///
     /// # Errors
@@ -188,7 +188,7 @@ impl Container {
     }
 
     /// Get the mapped port for the database.
-    ///
+    /// 
     /// This is the port that you can use to connect to the database. This will be a random port that is mapped to the internal port configured via [`ContainerBuilder::with_port`].
     ///
     /// # Errors

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum TraceInfo {
     // LEAVE ORDER AS IS
     // This is important for deserialization as the traceparent is always present
+
     /// The traceparent and tracestate of the event.
     /// This is used for distributed tracing.
     WithState {
@@ -51,7 +52,7 @@ impl TraceInfo {
     ///
     /// # Errors
     /// If the cloudevent contains a tracestate but no traceparent, an error will be returned.
-    #[cfg(feature = "cloudevents")]
+    #[cfg(feature="cloudevents")]
     pub fn from_cloudevent(event: &cloudevents::Event) -> Result<Option<Self>, EventError> {
         let traceparent = event.extension("traceparent").map(ToString::to_string);
         let tracestate = event.extension("tracestate").map(ToString::to_string);
