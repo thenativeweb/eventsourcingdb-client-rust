@@ -18,13 +18,20 @@
 //! If this works, it means that the client is correctly configured and you can use it to make requests to the DB.
 
 mod client_request;
+mod precondition;
 
-use client_request::{ClientRequest, PingRequest, VerifyApiTokenRequest};
+use client_request::{
+    ClientRequest, OneShotRequest, PingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+};
 
+pub use precondition::Precondition;
 use reqwest;
 use url::Url;
 
-use crate::error::ClientError;
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate},
+};
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -72,9 +79,14 @@ impl Client {
 
     /// Utility function to request an endpoint of the API.
     ///
+    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request<R: ClientRequest>(&self, endpoint: R) -> Result<R::Response, ClientError> {
+    fn build_request<R: ClientRequest>(
+        &self,
+        endpoint: &R,
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
         let url = self
             .base_url
             .join(endpoint.url_path())
@@ -93,15 +105,27 @@ impl Client {
         } else {
             request
         };
+        Ok(request)
+    }
 
-        let response = request.send().await?;
+    /// Utility function to request an endpoint of the API as a oneshot.
+    ///
+    /// This means, that the response is not streamed, but returned as a single value.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    async fn request_oneshot<R: OneShotRequest>(
+        &self,
+        endpoint: R,
+    ) -> Result<R::Response, ClientError> {
+        let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
-            Err(ClientError::DBError(
+            Err(ClientError::DBApiError(
                 response.status(),
                 response.text().await.unwrap_or_default(),
             ))
@@ -125,7 +149,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let _ = self.request(PingRequest).await?;
+        let _ = self.request_oneshot(PingRequest).await?;
         Ok(())
     }
 
@@ -146,7 +170,45 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
-        let _ = self.request(VerifyApiTokenRequest).await?;
+        let _ = self.request_oneshot(VerifyApiTokenRequest).await?;
         Ok(())
+    }
+
+    /// Writes events to the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let candidates = vec![
+    ///     EventCandidate::builder()
+    ///        .source("https://www.eventsourcingdb.io".to_string())
+    ///        .data(json!({"value": 1}))
+    ///        .subject("/test".to_string())
+    ///        .r#type("io.eventsourcingdb.test".to_string())
+    ///        .build()
+    /// ];
+    /// let written_events = client.write_events(candidates, vec![]).await.expect("Failed to write events");
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn write_events(
+        &self,
+        events: Vec<EventCandidate>,
+        preconditions: Vec<Precondition>,
+    ) -> Result<Vec<Event>, ClientError> {
+        self.request_oneshot(WriteEventsRequest {
+            events,
+            preconditions,
+        })
+        .await
     }
 }

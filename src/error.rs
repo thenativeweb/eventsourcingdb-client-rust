@@ -26,7 +26,7 @@ pub enum ClientError {
     SerdeJsonError(#[from] serde_json::Error),
     /// The DB returned an error+
     #[error("The DB returned an error: {0}")]
-    DBError(StatusCode, String),
+    DBApiError(StatusCode, String),
     /// There was a problem with the `cloudevents` message
     #[cfg(feature = "cloudevents")]
     #[error("The CloudEvents message is invalid: {0}")]
@@ -45,4 +45,13 @@ pub enum ContainerError {
     /// This error should never happen. If you experience this error, please let us know as it's likely a bug in the SDK.
     #[error("URL parsing error: {0}")]
     URLParseError(#[from] url::ParseError),
+}
+
+/// Error type for the event
+#[derive(Debug, thiserror::Error)]
+pub enum EventError {
+    /// The passed cloudevent is invalid
+    #[cfg(feature = "cloudevents")]
+    #[error("The passed cloudevent is invalid")]
+    InvalidCloudevent,
 }
