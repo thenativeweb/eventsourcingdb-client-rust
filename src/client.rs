@@ -26,9 +26,7 @@ use crate::{
     event::{Event, EventCandidate, ManagementEvent},
 };
 use client_request::{
-    ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
-    ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest,
-    WriteEventsRequest, list_event_types::EventType,
+    list_event_types::EventType, ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest, OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest
 };
 use futures::Stream;
 pub use precondition::Precondition;
@@ -206,6 +204,39 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         let response = self
             .request_streaming(ReadEventsRequest { subject, options })
+            .await?;
+        Ok(response)
+    }
+
+    /// Observe events from the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut event_stream = client.observe_events("/", None).await.expect("Failed to observe events");
+    /// while let Some(event) = event_stream.next().await {
+    ///     println!("Found Type {:?}", event.expect("Error while reading event"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn observe_events<'a>(
+        &self,
+        subject: &'a str,
+        options: Option<request_options::ObserveEventsRequestOptions<'a>>,
+    ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
+        let response = self
+            .request_streaming(ObserveEventsRequest { subject, options })
             .await?;
         Ok(response)
     }
