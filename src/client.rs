@@ -190,7 +190,7 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
-    /// let mut event_stream = client.read_events("/").await.expect("Failed to read events");
+    /// let mut event_stream = client.read_events("/", None).await.expect("Failed to read events");
     /// while let Some(event) = event_stream.next().await {
     ///     println!("Found Type {:?}", event.expect("Error while reading events"));
     /// }
