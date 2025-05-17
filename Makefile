@@ -1,7 +1,8 @@
 qa: analyze test
 
-analyze: format-check
+analyze:
 	@cargo clippy
+	@cargo fmt --check
 
 test:
 	@cargo test
@@ -9,7 +10,4 @@ test:
 format:
 	@cargo fmt
 
-format-check:
-	@cargo fmt --check
-
-.PHONY: analyze qa test
+.PHONY: analyze format qa test
