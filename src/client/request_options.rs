@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Options for reading events from the database
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadEventsRequestOptions<'a> {
     /// Start reading events from this start event
