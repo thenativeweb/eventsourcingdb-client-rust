@@ -114,7 +114,7 @@ impl ContainerBuilder {
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
-            container: GenericImage::new(self.image_name, self.image_tag)
+            instance: GenericImage::new(self.image_name, self.image_tag)
                 .with_exposed_port(self.internal_port)
                 .with_wait_for(WaitFor::Http(Box::new(
                     HttpWaitStrategy::new("/api/v1/ping")
@@ -152,7 +152,7 @@ impl ContainerBuilder {
 /// ```
 #[derive(Debug)]
 pub struct Container {
-    container: ContainerAsync<GenericImage>,
+    instance: ContainerAsync<GenericImage>,
     internal_port: ContainerPort,
     api_token: String,
 }
@@ -184,7 +184,7 @@ impl Container {
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
     pub async fn get_host(&self) -> Result<Host, ContainerError> {
-        Ok(self.container.get_host().await?)
+        Ok(self.instance.get_host().await?)
     }
 
     /// Get the mapped port for the database.
@@ -194,10 +194,7 @@ impl Container {
     /// # Errors
     /// This function will return an error if the container is not running (e.g. because it crashed) or if the host could not be retrieved
     pub async fn get_mapped_port(&self) -> Result<u16, ContainerError> {
-        Ok(self
-            .container
-            .get_host_port_ipv4(self.internal_port)
-            .await?)
+        Ok(self.instance.get_host_port_ipv4(self.internal_port).await?)
     }
 
     /// Get the complete http base URL for the database.
@@ -227,7 +224,7 @@ impl Container {
     /// # Errors
     /// This function will return an error if the container could not be stopped.
     pub async fn stop(self) -> Result<(), ContainerError> {
-        self.container.stop().await?;
+        self.instance.stop().await?;
         Ok(())
     }
 
