@@ -13,7 +13,7 @@ pub struct ReadEventsRequest<'a> {
     pub options: Option<ReadEventsRequestOptions<'a>>,
 }
 
-impl<'a> ClientRequest for ReadEventsRequest<'a> {
+impl ClientRequest for ReadEventsRequest<'_> {
     const URL_PATH: &'static str = "/api/v1/read-events";
     const METHOD: Method = Method::POST;
 
@@ -22,7 +22,7 @@ impl<'a> ClientRequest for ReadEventsRequest<'a> {
     }
 }
 
-impl<'a> StreamingRequest for ReadEventsRequest<'a> {
+impl StreamingRequest for ReadEventsRequest<'_> {
     type ItemType = Event;
 
     fn build_stream(
@@ -32,14 +32,14 @@ impl<'a> StreamingRequest for ReadEventsRequest<'a> {
         #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
         enum LineItem {
             Error { error: String },
-            Event(Event),
+            Event(Box<Event>),
         }
 
         impl From<LineItem> for Result<Event, ClientError> {
             fn from(item: LineItem) -> Self {
                 match item {
                     LineItem::Error { error } => Err(ClientError::DBError(error)),
-                    LineItem::Event(event_type) => Ok(event_type),
+                    LineItem::Event(event_type) => Ok(*event_type),
                 }
             }
         }
