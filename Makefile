@@ -2,8 +2,12 @@ qa: analyze test
 
 analyze:
 	@cargo clippy
+	@cargo fmt --check
 
 test:
 	@cargo test
 
-.PHONY: analyze qa test
+format:
+	@cargo fmt
+
+.PHONY: analyze format qa test
