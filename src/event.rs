@@ -10,5 +10,5 @@ pub use event_types::event_candidate::EventCandidate;
 pub use event_types::management_event::ManagementEvent;
 pub use trace_info::TraceInfo;
 
-#[cfg(feature="cloudevents")]
+#[cfg(feature = "cloudevents")]
 use crate::error::EventError;
