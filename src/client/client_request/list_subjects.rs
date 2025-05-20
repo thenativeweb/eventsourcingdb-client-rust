@@ -12,7 +12,7 @@ pub struct ListSubjectsRequest<'a> {
     pub base_subject: &'a str,
 }
 
-impl<'a> ClientRequest for ListSubjectsRequest<'a> {
+impl ClientRequest for ListSubjectsRequest<'_> {
     const URL_PATH: &'static str = "/api/v1/read-subjects";
     const METHOD: Method = Method::POST;
 
@@ -20,7 +20,7 @@ impl<'a> ClientRequest for ListSubjectsRequest<'a> {
         Some(Ok(self))
     }
 }
-impl<'a> StreamingRequest for ListSubjectsRequest<'a> {
+impl StreamingRequest for ListSubjectsRequest<'_> {
     type ItemType = String;
 
     fn build_stream(

@@ -1,11 +1,11 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use chrono::{DateTime, Utc};
 
 /// Represents a management event that has been received from the DB.
-/// 
+///
 /// For management requests like [`crate::client::Client::ping`] and [`crate::client::Client::verify_api_token`] the DB will send a management event.
-/// 
+///
 /// Compared to a normal Event, this does not contain the following fields:
 /// - hash
 /// - predecessorhash
@@ -18,7 +18,7 @@ pub struct ManagementEvent {
     source: String,
     specversion: String,
     subject: String,
-    time: DateTime<Utc>, 
+    time: DateTime<Utc>,
     r#type: String,
 }
 
@@ -61,7 +61,7 @@ impl ManagementEvent {
         &self.time
     }
     /// Get the type of an event.
-    /// 
+    ///
     /// This method is called `ty` to avoid conflicts with the `type` keyword in Rust.
     #[must_use]
     pub fn ty(&self) -> &str {

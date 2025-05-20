@@ -77,12 +77,9 @@ pub trait StreamingRequest: ClientRequest {
     fn lines_stream(
         response: reqwest::Response,
     ) -> impl Stream<Item = Result<String, ClientError>> {
-        let bytes = response.bytes_stream().map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Failed to read response stream: {err}"),
-            )
-        });
+        let bytes = response
+            .bytes_stream()
+            .map_err(|err| io::Error::other(format!("Failed to read response stream: {err}")));
         let stream_reader = StreamReader::new(bytes);
         LinesStream::new(BufReader::new(stream_reader).lines()).map_err(ClientError::from)
     }
