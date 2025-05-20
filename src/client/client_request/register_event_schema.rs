@@ -23,7 +23,7 @@ impl<'a> RegisterEventSchemaRequest<'a> {
     }
 }
 
-impl<'a> ClientRequest for RegisterEventSchemaRequest<'a> {
+impl ClientRequest for RegisterEventSchemaRequest<'_> {
     const URL_PATH: &'static str = "/api/v1/register-event-schema";
     const METHOD: Method = Method::POST;
 
@@ -31,7 +31,7 @@ impl<'a> ClientRequest for RegisterEventSchemaRequest<'a> {
         Some(Ok(self))
     }
 }
-impl<'a> OneShotRequest for RegisterEventSchemaRequest<'a> {
+impl OneShotRequest for RegisterEventSchemaRequest<'_> {
     type Response = ManagementEvent;
 
     fn validate_response(&self, response: &Self::Response) -> Result<(), ClientError> {

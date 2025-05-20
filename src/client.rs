@@ -38,7 +38,7 @@ use url::Url;
 pub struct Client {
     base_url: Url,
     api_token: String,
-    client: reqwest::Client,
+    reqwest: reqwest::Client,
 }
 
 impl Client {
@@ -47,7 +47,7 @@ impl Client {
         Client {
             base_url,
             api_token: api_token.into(),
-            client: reqwest::Client::new(),
+            reqwest: reqwest::Client::new(),
         }
     }
 
@@ -93,8 +93,8 @@ impl Client {
             .map_err(ClientError::URLParseError)?;
 
         let request = match endpoint.method() {
-            reqwest::Method::GET => self.client.get(url),
-            reqwest::Method::POST => self.client.post(url),
+            reqwest::Method::GET => self.reqwest.get(url),
+            reqwest::Method::POST => self.reqwest.post(url),
             _ => return Err(ClientError::InvalidRequestMethod),
         }
         .header("Authorization", format!("Bearer {}", self.api_token));
@@ -376,7 +376,7 @@ impl Client {
     /// }
     /// # })
     /// ```
-    /// 
+    ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn list_event_types(
