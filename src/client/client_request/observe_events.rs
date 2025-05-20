@@ -1,7 +1,9 @@
 use reqwest::Method;
 use serde::Serialize;
 
-use crate::{client::request_options::ObserveEventsRequestOptions, error::ClientError, event::Event};
+use crate::{
+    client::request_options::ObserveEventsRequestOptions, error::ClientError, event::Event,
+};
 
 use super::{ClientRequest, StreamingRequest};
 
@@ -12,7 +14,7 @@ pub struct ObserveEventsRequest<'a> {
     pub options: Option<ObserveEventsRequestOptions<'a>>,
 }
 
-impl<'a> ClientRequest for ObserveEventsRequest<'a> {
+impl ClientRequest for ObserveEventsRequest<'_> {
     const URL_PATH: &'static str = "/api/v1/read-events";
     const METHOD: Method = Method::POST;
 
@@ -21,6 +23,6 @@ impl<'a> ClientRequest for ObserveEventsRequest<'a> {
     }
 }
 
-impl<'a> StreamingRequest for ObserveEventsRequest<'a> {
+impl StreamingRequest for ObserveEventsRequest<'_> {
     type ItemType = Event;
 }

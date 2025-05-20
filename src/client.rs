@@ -26,7 +26,9 @@ use crate::{
     event::{Event, EventCandidate, ManagementEvent},
 };
 use client_request::{
-    list_event_types::EventType, ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest, OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest
+    ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest,
+    OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest,
+    VerifyApiTokenRequest, WriteEventsRequest, list_event_types::EventType,
 };
 use futures::Stream;
 pub use precondition::Precondition;
