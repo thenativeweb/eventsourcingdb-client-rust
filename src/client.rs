@@ -147,7 +147,7 @@ impl Client {
         let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
-            Ok(endpoint.build_stream(response))
+            Ok(R::build_stream(response))
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
