@@ -11,15 +11,21 @@ testcontainer = ["dep:testcontainers"]
 [dependencies]
 chrono = { version = "0.4.41", features = ["serde"] }
 cloudevents-sdk = { version = "0.8.0", features = ["reqwest"], optional = true }
-url = "2.5.4"
-reqwest = { version = "0.12.15", features = ["json"] }
+futures = "0.3.31"
+futures-util = "0.3.31"
+jsonschema = "0.30.0"
+reqwest = { version = "0.12.15", features = ["json", "stream"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 testcontainers = { version = "0.24.0", features = [
   "http_wait",
 ], optional = true }
 thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = ["io-util"] }
+tokio-util = { version = "0.7.15", features = ["io"] }
+tokio-stream = { version = "0.1.17", features = ["io-util"] }
 typed-builder = "0.21.0"
+url = "2.5.4"
 
 [dev-dependencies]
 eventsourcingdb-client-rust = { path = ".", features = ["testcontainer"] }

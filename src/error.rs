@@ -6,9 +6,15 @@ use thiserror::Error;
 /// Error type for the client
 #[derive(Debug, Error)]
 pub enum ClientError {
+    /// An IO Error occurred
+    #[error("An IO error occurred: {0}")]
+    IoError(#[from] std::io::Error),
     /// The provided request method is invalid
     #[error("The provided request method is invalid")]
     InvalidRequestMethod,
+    /// The provided event type is invalid
+    #[error("The provided event type is invalid")]
+    InvalidEventType,
     /// The provided API token is invalid
     #[error("The provided API token is invalid")]
     APITokenInvalid,
@@ -24,9 +30,16 @@ pub enum ClientError {
     /// There was a problem with the JSON serialization
     #[error("The JSON serialization failed: {0}")]
     SerdeJsonError(#[from] serde_json::Error),
-    /// The DB returned an error+
+    /// The DB returned an error in the response
+    #[error("The DB returned an error in the response: {0}")]
+    DBError(String),
+    /// The DB returned an error
     #[error("The DB returned an error: {0}")]
     DBApiError(StatusCode, String),
+    // check if this can hold a validation error in the future
+    /// The passed jsonschema is invalid
+    #[error("The passed jsonschema is invalid")]
+    JsonSchemaError,
     /// There was a problem with the `cloudevents` message
     #[cfg(feature = "cloudevents")]
     #[error("The CloudEvents message is invalid: {0}")]

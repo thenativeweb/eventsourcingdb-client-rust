@@ -20,25 +20,26 @@
 mod client_request;
 mod precondition;
 
-use client_request::{
-    ClientRequest, OneShotRequest, PingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+use crate::{
+    error::ClientError,
+    event::{Event, EventCandidate, ManagementEvent},
 };
-
+use client_request::{
+    ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
+    RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+    list_event_types::EventType,
+};
+use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
 use url::Url;
-
-use crate::{
-    error::ClientError,
-    event::{Event, EventCandidate},
-};
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
 pub struct Client {
     base_url: Url,
     api_token: String,
-    client: reqwest::Client,
+    reqwest: reqwest::Client,
 }
 
 impl Client {
@@ -47,7 +48,7 @@ impl Client {
         Client {
             base_url,
             api_token: api_token.into(),
-            client: reqwest::Client::new(),
+            reqwest: reqwest::Client::new(),
         }
     }
 
@@ -93,8 +94,8 @@ impl Client {
             .map_err(ClientError::URLParseError)?;
 
         let request = match endpoint.method() {
-            reqwest::Method::GET => self.client.get(url),
-            reqwest::Method::POST => self.client.post(url),
+            reqwest::Method::GET => self.reqwest.get(url),
+            reqwest::Method::POST => self.reqwest.post(url),
             _ => return Err(ClientError::InvalidRequestMethod),
         }
         .header("Authorization", format!("Bearer {}", self.api_token));
@@ -124,6 +125,28 @@ impl Client {
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
             Ok(result)
+        } else {
+            Err(ClientError::DBApiError(
+                response.status(),
+                response.text().await.unwrap_or_default(),
+            ))
+        }
+    }
+
+    /// Utility function to request an endpoint of the API as a stream.
+    ///
+    /// This means, that the response is streamed and returned as a stream of values.
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    async fn request_streaming<R: StreamingRequest>(
+        &self,
+        endpoint: R,
+    ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
+        let response = self.build_request(&endpoint)?.send().await?;
+
+        if response.status().is_success() {
+            Ok(endpoint.build_stream(response))
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
@@ -172,6 +195,130 @@ impl Client {
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
         let _ = self.request_oneshot(VerifyApiTokenRequest).await?;
         Ok(())
+    }
+
+    /// Registers an event schema with the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let event_type = "io.eventsourcingdb.test";
+    /// let schema = json!({
+    ///     "type": "object",
+    ///     "properties": {
+    ///         "id": {
+    ///             "type": "string"
+    ///         },
+    ///         "name": {
+    ///             "type": "string"
+    ///         }
+    ///     },
+    ///     "required": ["id", "name"]
+    /// });
+    /// client.register_event_schema(event_type, &schema).await.expect("Failed to list event types");
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the provided schema is invalid.
+    pub async fn register_event_schema(
+        &self,
+        event_type: &str,
+        schema: &serde_json::Value,
+    ) -> Result<ManagementEvent, ClientError> {
+        self.request_oneshot(RegisterEventSchemaRequest::try_new(event_type, schema)?)
+            .await
+    }
+
+    /// List all subjects in the DB instance.
+    ///
+    /// To get all subjects in the DB, just pass `None` as the `base_subject`.
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut subject_stream = client.list_subjects(None).await.expect("Failed to list event types");
+    /// while let Some(subject) = subject_stream.next().await {
+    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// To get all subjects under /test in the DB, just pass `Some("/test")` as the `base_subject`.
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut subject_stream = client.list_subjects(Some("/test")).await.expect("Failed to list event types");
+    /// while let Some(subject) = subject_stream.next().await {
+    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn list_subjects(
+        &self,
+        base_subject: Option<&str>,
+    ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
+        let response = self
+            .request_streaming(ListSubjectsRequest {
+                base_subject: base_subject.unwrap_or("/"),
+            })
+            .await?;
+        Ok(response)
+    }
+
+    /// List all event types in the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut type_stream = client.list_event_types().await.expect("Failed to list event types");
+    /// while let Some(ty) = type_stream.next().await {
+    ///     println!("Found Type {}", ty.expect("Error while reading types").name);
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn list_event_types(
+        &self,
+    ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
+        let response = self.request_streaming(ListEventTypesRequest).await?;
+        Ok(response)
     }
 
     /// Writes events to the DB instance.

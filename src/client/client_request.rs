@@ -1,16 +1,28 @@
 //! This is a purely internal module to represent client requests to the database.
 
+pub mod list_event_types;
+mod list_subjects;
 mod ping;
+mod register_event_schema;
 mod verify_api_token;
 mod write_events;
 
+pub use list_event_types::ListEventTypesRequest;
+pub use list_subjects::ListSubjectsRequest;
 pub use ping::PingRequest;
+pub use register_event_schema::RegisterEventSchemaRequest;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
 use crate::error::ClientError;
+use futures::{Stream, stream::TryStreamExt};
+use futures_util::io;
 use reqwest::Method;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_stream::wrappers::LinesStream;
+use tokio_util::io::StreamReader;
 
 /// Represents a request to the database client
 pub trait ClientRequest {
@@ -40,5 +52,25 @@ pub trait OneShotRequest: ClientRequest {
     /// Validate the response from the database
     fn validate_response(&self, _response: &Self::Response) -> Result<(), ClientError> {
         Ok(())
+    }
+}
+
+/// Represents a request to the database that expects a stream of responses
+pub trait StreamingRequest: ClientRequest {
+    type ItemType: DeserializeOwned;
+
+    fn build_stream(
+        self,
+        response: reqwest::Response,
+    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>>;
+
+    fn lines_stream(
+        response: reqwest::Response,
+    ) -> impl Stream<Item = Result<String, ClientError>> {
+        let bytes = response
+            .bytes_stream()
+            .map_err(|err| io::Error::other(format!("Failed to read response stream: {err}")));
+        let stream_reader = StreamReader::new(bytes);
+        LinesStream::new(BufReader::new(stream_reader).lines()).map_err(ClientError::from)
     }
 }
