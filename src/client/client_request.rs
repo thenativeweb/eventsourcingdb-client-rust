@@ -25,8 +25,9 @@ use futures::{
 };
 use futures_util::io;
 use reqwest::Method;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
 use tokio_util::io::StreamReader;
@@ -61,19 +62,54 @@ pub trait OneShotRequest: ClientRequest {
         Ok(())
     }
 }
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
+enum StreamLineItem<T> {
+    Error {
+        error: String,
+    },
+    Heartbeat,
+    #[serde(untagged)]
+    Ok {
+        #[serde(rename = "type")]
+        ty: String,
+        payload: T,
+    },
+}
+
+impl<T> StreamLineItem<T> {
+    pub fn into_result_option(self, expected_type: &str) -> Result<Option<T>, ClientError> {
+        match self {
+            StreamLineItem::Error { error } => Err(ClientError::DBError(error)),
+            StreamLineItem::Heartbeat => Ok(None),
+            StreamLineItem::Ok { ty, payload } => {
+                if ty == expected_type {
+                    Ok(Some(payload))
+                } else {
+                    Err(ClientError::InvalidResponseType(ty))
+                }
+            }
+        }
+    }
+}
 
 /// Represents a request to the database that expects a stream of responses
 pub trait StreamingRequest: ClientRequest {
     type ItemType: DeserializeOwned;
+    const ITEM_TYPE_NAME: &'static str;
 
     fn build_stream(
         response: reqwest::Response,
-    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
-        Self::lines_stream(response).map(|line| {
-            let line = line?;
-            let item = serde_json::from_str(line.as_str())?;
-            Ok(item)
-        })
+    ) -> Pin<Box<impl Stream<Item = Result<Self::ItemType, ClientError>>>> {
+        Box::pin(
+            Self::lines_stream(response)
+                .map(|line| {
+                    let line = line?;
+                    let item: StreamLineItem<Self::ItemType> = serde_json::from_str(line.as_str())?;
+                    item.into_result_option(Self::ITEM_TYPE_NAME)
+                })
+                .filter_map(|o| async { o.transpose() }),
+        )
     }
 
     fn lines_stream(
