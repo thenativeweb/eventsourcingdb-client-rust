@@ -3,6 +3,7 @@
 pub mod list_event_types;
 mod list_subjects;
 mod ping;
+mod read_events;
 mod register_event_schema;
 mod verify_api_token;
 mod write_events;
@@ -10,12 +11,16 @@ mod write_events;
 pub use list_event_types::ListEventTypesRequest;
 pub use list_subjects::ListSubjectsRequest;
 pub use ping::PingRequest;
+pub use read_events::ReadEventsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
 use crate::error::ClientError;
-use futures::{Stream, stream::TryStreamExt};
+use futures::{
+    Stream,
+    stream::{StreamExt, TryStreamExt},
+};
 use futures_util::io;
 use reqwest::Method;
 use serde::Serialize;
@@ -60,9 +65,14 @@ pub trait StreamingRequest: ClientRequest {
     type ItemType: DeserializeOwned;
 
     fn build_stream(
-        self,
         response: reqwest::Response,
-    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>>;
+    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
+        Self::lines_stream(response).map(|line| {
+            let line = line?;
+            let item = serde_json::from_str(line.as_str())?;
+            Ok(item)
+        })
+    }
 
     fn lines_stream(
         response: reqwest::Response,

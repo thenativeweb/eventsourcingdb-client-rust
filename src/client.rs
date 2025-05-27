@@ -19,6 +19,7 @@
 
 mod client_request;
 mod precondition;
+pub mod request_options;
 
 use crate::{
     error::ClientError,
@@ -26,8 +27,8 @@ use crate::{
 };
 use client_request::{
     ClientRequest, ListEventTypesRequest, ListSubjectsRequest, OneShotRequest, PingRequest,
-    RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
-    list_event_types::EventType,
+    ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest, VerifyApiTokenRequest,
+    WriteEventsRequest, list_event_types::EventType,
 };
 use futures::Stream;
 pub use precondition::Precondition;
@@ -146,7 +147,7 @@ impl Client {
         let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
-            Ok(endpoint.build_stream(response))
+            Ok(R::build_stream(response))
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
@@ -174,6 +175,39 @@ impl Client {
     pub async fn ping(&self) -> Result<(), ClientError> {
         let _ = self.request_oneshot(PingRequest).await?;
         Ok(())
+    }
+
+    /// Reads events from the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let mut event_stream = client.read_events("/", None).await.expect("Failed to read events");
+    /// while let Some(event) = event_stream.next().await {
+    ///     println!("Found Type {:?}", event.expect("Error while reading events"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn read_events<'a>(
+        &self,
+        subject: &'a str,
+        options: Option<request_options::ReadEventsRequestOptions<'a>>,
+    ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
+        let response = self
+            .request_streaming(ReadEventsRequest { subject, options })
+            .await?;
+        Ok(response)
     }
 
     /// Verifies the API token by sending a request to the DB instance.

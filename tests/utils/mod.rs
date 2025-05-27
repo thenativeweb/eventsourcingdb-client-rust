@@ -57,7 +57,7 @@ pub fn assert_event_match_eventcandidate(
         event.predecessorhash(),
         previous_event_hash
             .unwrap_or("0000000000000000000000000000000000000000000000000000000000000000"),
-        "Time should be present"
+        "Previous hash should be present"
     );
     assert_eq!(event.specversion(), "1.0", "Spec version should be 1.0");
     assert!(

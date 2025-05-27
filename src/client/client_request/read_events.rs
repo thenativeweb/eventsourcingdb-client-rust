@@ -1,34 +1,29 @@
 use futures::{Stream, stream::StreamExt};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::error::ClientError;
+use crate::{client::request_options::ReadEventsRequestOptions, error::ClientError, event::Event};
 
 use super::{ClientRequest, StreamingRequest};
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct EventType {
-    #[serde(rename = "eventType")]
-    pub name: String,
-    pub is_phantom: bool,
-    pub schema: Option<Value>,
-}
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListEventTypesRequest;
+pub struct ReadEventsRequest<'a> {
+    pub subject: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<ReadEventsRequestOptions<'a>>,
+}
 
-impl ClientRequest for ListEventTypesRequest {
-    const URL_PATH: &'static str = "/api/v1/read-event-types";
+impl ClientRequest for ReadEventsRequest<'_> {
+    const URL_PATH: &'static str = "/api/v1/read-events";
     const METHOD: Method = Method::POST;
 
     fn body(&self) -> Option<Result<impl Serialize, ClientError>> {
         Some(Ok(self))
     }
 }
-impl StreamingRequest for ListEventTypesRequest {
-    type ItemType = EventType;
+
+impl StreamingRequest for ReadEventsRequest<'_> {
+    type ItemType = Event;
 
     fn build_stream(
         response: reqwest::Response,
@@ -37,14 +32,14 @@ impl StreamingRequest for ListEventTypesRequest {
         #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
         enum LineItem {
             Error { error: String },
-            EventType(EventType),
+            Event(Box<Event>),
         }
 
-        impl From<LineItem> for Result<EventType, ClientError> {
+        impl From<LineItem> for Result<Event, ClientError> {
             fn from(item: LineItem) -> Self {
                 match item {
                     LineItem::Error { error } => Err(ClientError::DBError(error)),
-                    LineItem::EventType(event_type) => Ok(event_type),
+                    LineItem::Event(event_type) => Ok(*event_type),
                 }
             }
         }
