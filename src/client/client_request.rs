@@ -2,6 +2,7 @@
 
 pub mod list_event_types;
 mod list_subjects;
+mod observe_events;
 mod ping;
 mod read_events;
 mod register_event_schema;
@@ -10,6 +11,7 @@ mod write_events;
 
 pub use list_event_types::ListEventTypesRequest;
 pub use list_subjects::ListSubjectsRequest;
+pub use observe_events::ObserveEventsRequest;
 pub use ping::PingRequest;
 pub use read_events::ReadEventsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;

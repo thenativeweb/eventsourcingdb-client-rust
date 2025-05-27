@@ -22,6 +22,20 @@ pub struct ReadEventsRequestOptions<'a> {
     pub upper_bound: Option<Bound<'a>>,
 }
 
+/// Options for observing events from the database
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObserveEventsRequestOptions<'a> {
+    /// Start reading events from this start event
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_latest_event: Option<FromLatestEventOptions<'a>>,
+    /// Lower bound of events to read
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lower_bound: Option<Bound<'a>>,
+    /// Include recursive subject's events
+    pub recursive: bool,
+}
+
 /// Ordering of the responses of requests
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "kebab-case")]
