@@ -27,7 +27,6 @@ use futures_util::io;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
 use tokio_util::io::StreamReader;
@@ -100,7 +99,7 @@ pub trait StreamingRequest: ClientRequest {
 
     fn build_stream(
         response: reqwest::Response,
-    ) -> Pin<Box<impl Stream<Item = Result<Self::ItemType, ClientError>>>> {
+    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
         Box::pin(
             Self::lines_stream(response)
                 .map(|line| {
