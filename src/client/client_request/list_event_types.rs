@@ -1,4 +1,3 @@
-use futures::{Stream, stream::StreamExt};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,30 +28,5 @@ impl ClientRequest for ListEventTypesRequest {
 }
 impl StreamingRequest for ListEventTypesRequest {
     type ItemType = EventType;
-
-    fn build_stream(
-        response: reqwest::Response,
-    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
-        #[derive(Deserialize, Debug)]
-        #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
-        enum LineItem {
-            Error { error: String },
-            EventType(EventType),
-        }
-
-        impl From<LineItem> for Result<EventType, ClientError> {
-            fn from(item: LineItem) -> Self {
-                match item {
-                    LineItem::Error { error } => Err(ClientError::DBError(error)),
-                    LineItem::EventType(event_type) => Ok(event_type),
-                }
-            }
-        }
-
-        Self::lines_stream(response).map(|line| {
-            let line = line?;
-            let item: LineItem = serde_json::from_str(line.as_str())?;
-            item.into()
-        })
-    }
+    const ITEM_TYPE_NAME: &'static str = "eventType";
 }
