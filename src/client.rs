@@ -100,7 +100,7 @@ impl Client {
             reqwest::Method::POST => self.reqwest.post(url),
             _ => return Err(ClientError::InvalidRequestMethod),
         }
-        .header("Authorization", format!("Bearer {}", self.api_token));
+        .bearer_auth(&self.api_token);
         let request = if let Some(body) = endpoint.body() {
             request
                 .header("Content-Type", "application/json")
@@ -224,9 +224,22 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
-    /// let mut event_stream = client.observe_events("/", None).await.expect("Failed to observe events");
-    /// while let Some(event) = event_stream.next().await {
-    ///     println!("Found Type {:?}", event.expect("Error while reading event"));
+    /// # client.write_events(
+    /// #   vec![
+    /// #     EventCandidate::builder()
+    /// #        .source("https://www.eventsourcingdb.io".to_string())
+    /// #        .data(json!({"value": 1}))
+    /// #        .subject("/test".to_string())
+    /// #        .r#type("io.eventsourcingdb.test".to_string())
+    /// #        .build()
+    /// #   ],
+    /// #   vec![]
+    /// # ).await.expect("Failed to write events");
+    /// let mut event_stream = client.observe_events("/test", None).await.expect("Failed to observe events");
+    /// match event_stream.next().await {
+    ///     Some(Ok(event)) => println!("Found Event {:?}", event),
+    ///     Some(Err(e)) => eprintln!("Error while reading event: {:?}", e),
+    ///     None => println!("No more events."),
     /// }
     /// # })
     /// ```
