@@ -6,6 +6,7 @@ mod observe_events;
 mod ping;
 mod read_events;
 mod register_event_schema;
+mod run_eventql_query;
 mod verify_api_token;
 mod write_events;
 
@@ -15,6 +16,7 @@ pub use observe_events::ObserveEventsRequest;
 pub use ping::PingRequest;
 pub use read_events::ReadEventsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
+pub use run_eventql_query::RunEventqlQueryRequest;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
