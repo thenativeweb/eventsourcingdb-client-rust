@@ -44,6 +44,9 @@ pub enum ClientError {
     #[cfg(feature = "cloudevents")]
     #[error("The CloudEvents message is invalid: {0}")]
     CloudeventsMessageError(#[from] cloudevents::message::Error),
+    /// The database returned an invalid response type
+    #[error("The DB returned an invalid response type: {0}")]
+    InvalidResponseType(String),
 }
 
 /// Error type for the [`crate::container`] feature.
