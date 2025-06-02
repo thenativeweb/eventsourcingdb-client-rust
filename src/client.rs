@@ -27,8 +27,9 @@ use crate::{
 };
 use client_request::{
     ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest,
-    OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest, StreamingRequest,
-    VerifyApiTokenRequest, WriteEventsRequest, list_event_types::EventType,
+    OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest,
+    RunEventqlQueryRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+    list_event_types::EventType,
 };
 use futures::Stream;
 pub use precondition::Precondition;
@@ -424,5 +425,38 @@ impl Client {
             preconditions,
         })
         .await
+    }
+
+    /// Run an eventql query against the DB.
+    ///
+    /// ```
+    /// use eventsourcingdb_client_rust::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb_client_rust::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb_client_rust::client::Client::new(db_url, api_token);
+    /// let query = "FROM e IN events ORDER BY e.time DESC TOP 100 PROJECT INTO e";
+    /// let mut row_stream = client.run_eventql_query(query).await.expect("Failed to list event types");
+    /// while let Some(row) = row_stream.next().await {
+    ///     println!("Found row {:?}", row.expect("Error while reading row"));
+    /// }
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn run_eventql_query(
+        &self,
+        query: &str,
+    ) -> Result<impl Stream<Item = Result<serde_json::Value, ClientError>>, ClientError> {
+        let response = self
+            .request_streaming(RunEventqlQueryRequest { query })
+            .await?;
+        Ok(response)
     }
 }
