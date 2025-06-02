@@ -1,6 +1,5 @@
-use futures::{Stream, stream::StreamExt};
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::error::ClientError;
 
@@ -22,26 +21,5 @@ impl ClientRequest for ListSubjectsRequest<'_> {
 }
 impl StreamingRequest for ListSubjectsRequest<'_> {
     type ItemType = String;
-
-    fn build_stream(
-        response: reqwest::Response,
-    ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
-        #[derive(Deserialize, Debug)]
-        struct LineItem {
-            payload: LineItemPayload,
-            r#type: String,
-        }
-        #[derive(Deserialize, Debug)]
-        struct LineItemPayload {
-            subject: String,
-        }
-        Self::lines_stream(response).map(|line| {
-            let line = line?;
-            let item: LineItem = serde_json::from_str(line.as_str())?;
-            if item.r#type != "subject" {
-                return Err(ClientError::InvalidEventType);
-            }
-            Ok(item.payload.subject)
-        })
-    }
+    const ITEM_TYPE_NAME: &'static str = "subject";
 }
