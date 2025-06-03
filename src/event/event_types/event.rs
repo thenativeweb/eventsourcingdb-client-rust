@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::event::{EventCandidate, trace_info::TraceInfo};
+#[cfg(feature = "cloudevents")]
+use cloudevents::EventBuilder;
 
 /// Represents an event that has been received from the DB.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

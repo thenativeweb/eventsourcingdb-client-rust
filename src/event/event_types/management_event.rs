@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "cloudevents")]
+use cloudevents::EventBuilder;
 
 /// Represents a management event that has been received from the DB.
 ///

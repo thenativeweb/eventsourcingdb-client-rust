@@ -5,9 +5,11 @@ use typed_builder::TypedBuilder;
 
 #[cfg(feature = "cloudevents")]
 use crate::error::EventError;
+#[cfg(feature = "cloudevents")]
+use cloudevents::AttributesReader;
 
 /// Represents an event candidate that can be sent to the DB.
-/// This is a simplified version of the [`super::Event`] type.
+/// This is a simplified version of the [`super::event::Event`] type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TypedBuilder)]
 pub struct EventCandidate {
     /// The data of the event, serialized as JSON
