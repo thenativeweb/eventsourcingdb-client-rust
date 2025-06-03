@@ -1,6 +1,7 @@
 //! This module holds supporting traits for the "Tracing" feature of eventsourcingdb.
 
 use serde::{Deserialize, Serialize};
+
 #[cfg(feature = "cloudevents")]
 use crate::error::EventError;
 
