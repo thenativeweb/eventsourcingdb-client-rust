@@ -15,7 +15,7 @@ pub struct ObserveEventsRequest<'a> {
 }
 
 impl ClientRequest for ObserveEventsRequest<'_> {
-    const URL_PATH: &'static str = "/api/v1/read-events";
+    const URL_PATH: &'static str = "/api/v1/observe-events";
     const METHOD: Method = Method::POST;
 
     fn body(&self) -> Option<Result<impl Serialize, ClientError>> {

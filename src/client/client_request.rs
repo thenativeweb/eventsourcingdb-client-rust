@@ -17,6 +17,7 @@ pub use ping::PingRequest;
 pub use read_events::ReadEventsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
 pub use run_eventql_query::RunEventqlQueryRequest;
+use serde_json::Value;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
@@ -72,7 +73,7 @@ enum StreamLineItem<T> {
     Error { error: String },
     /// A heardbeat message was sent to keep the connection alive.
     /// This is only used when observing events, but it does not hurt to have it everywhere.
-    Heartbeat,
+    Heartbeat(Value),
     /// A successful response from the database
     /// Since the exact type of the payload is not known at this point, we use this as a fallback case.
     /// Every request item gets put in here and the type can be checked later on.
@@ -114,7 +115,7 @@ pub trait StreamingRequest: ClientRequest {
                             Some(Err(ClientError::DBError(error)))
                         }
                         // A heartbeat message was sent, which we ignore.
-                        Ok(StreamLineItem::Heartbeat) => None,
+                        Ok(StreamLineItem::Heartbeat(_value)) => None,
                         // A successful response was sent with the correct type.
                         Ok(StreamLineItem::Ok { payload, ty }) if ty == Self::ITEM_TYPE_NAME => {
                             Some(Ok(payload))
