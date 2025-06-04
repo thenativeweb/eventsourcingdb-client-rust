@@ -5,6 +5,8 @@ use typed_builder::TypedBuilder;
 
 #[cfg(feature = "cloudevents")]
 use crate::error::EventError;
+#[cfg(feature = "cloudevents")]
+use cloudevents::AttributesReader;
 
 /// Represents an event candidate that can be sent to the DB.
 /// This is a simplified version of the [`super::event::Event`] type.

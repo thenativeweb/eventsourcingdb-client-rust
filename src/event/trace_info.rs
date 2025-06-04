@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "cloudevents")]
+use crate::error::EventError;
+
 /// Represents the trace information of an event.
 /// This is used for distributed tracing.
 /// It can either be a traceparent or a traceparent and tracestate.
