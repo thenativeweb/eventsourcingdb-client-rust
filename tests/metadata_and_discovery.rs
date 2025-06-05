@@ -1,4 +1,4 @@
-use eventsourcingdb_client_rust::container::Container;
+use eventsourcingdb::container::Container;
 use futures::StreamExt;
 use serde_json::json;
 

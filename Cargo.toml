@@ -1,5 +1,5 @@
 [package]
-name = "eventsourcingdb-client-rust"
+name = "eventsourcingdb"
 version = "0.1.0"
 edition = "2024"
 description = "A client library for the EventsourcingDB by the native web."
@@ -33,7 +33,7 @@ typed-builder = "0.21.0"
 url = "2.5.4"
 
 [dev-dependencies]
-eventsourcingdb-client-rust = { path = ".", features = ["testcontainer"] }
+eventsourcingdb = { path = ".", features = ["testcontainer"] , version = "0.1.0" }
 testcontainers = { version = "0.24.0", features = ["http_wait"] }
 tokio = { version = "1.45.1", features = ["full"] }
 tokio-test = "0.4.4"

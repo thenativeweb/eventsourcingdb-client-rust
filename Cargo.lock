@@ -461,12 +461,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "eventsourcingdb-client-rust"
+name = "eventsourcingdb"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "cloudevents-sdk",
- "eventsourcingdb-client-rust",
+ "eventsourcingdb",
  "futures",
  "futures-util",
  "jsonschema",
