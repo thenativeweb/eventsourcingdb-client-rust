@@ -20,7 +20,8 @@ pub struct Event {
     time: DateTime<Utc>,
     #[serde(flatten)]
     traceinfo: Option<TraceInfo>,
-    r#type: String,
+    #[serde(rename = "type")]
+    ty: String,
 }
 
 impl Event {
@@ -89,7 +90,7 @@ impl Event {
     /// Get the type of an event.
     #[must_use]
     pub fn ty(&self) -> &str {
-        &self.r#type
+        &self.ty
     }
 }
 
@@ -99,7 +100,7 @@ impl From<Event> for EventCandidate {
             data: event.data,
             source: event.source,
             subject: event.subject,
-            r#type: event.r#type,
+            ty: event.ty,
             traceinfo: event.traceinfo,
         }
     }
@@ -111,7 +112,7 @@ impl From<Event> for cloudevents::Event {
         let mut builder = cloudevents::EventBuilderV10::new()
             .source(event.source)
             .subject(event.subject)
-            .ty(event.r#type)
+            .ty(event.ty)
             .id(event.id)
             .time(event.time.to_string())
             .data(event.datacontenttype, event.data);

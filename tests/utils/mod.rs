@@ -10,7 +10,7 @@ pub fn create_test_eventcandidate(
         .source("https://www.eventsourcingdb.io".to_string())
         .data(data.into())
         .subject(subject.to_string())
-        .r#type("io.eventsourcingdb.test".to_string())
+        .ty("io.eventsourcingdb.test".to_string())
         .build()
 }
 
@@ -34,7 +34,7 @@ pub fn assert_event_match_eventcandidate(
         &event_candidate.subject,
         "Subject mismatch"
     );
-    assert_eq!(event.ty(), &event_candidate.r#type, "Type mismatch");
+    assert_eq!(event.ty(), &event_candidate.ty, "Type mismatch");
     assert_eq!(
         event.traceinfo(),
         event_candidate.traceinfo.as_ref(),

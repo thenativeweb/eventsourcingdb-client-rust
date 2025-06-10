@@ -230,7 +230,7 @@ impl Client {
     /// #        .source("https://www.eventsourcingdb.io".to_string())
     /// #        .data(json!({"value": 1}))
     /// #        .subject("/test".to_string())
-    /// #        .r#type("io.eventsourcingdb.test".to_string())
+    /// #        .ty("io.eventsourcingdb.test".to_string())
     /// #        .build()
     /// #   ],
     /// #   vec![]
@@ -419,7 +419,7 @@ impl Client {
     ///        .source("https://www.eventsourcingdb.io".to_string())
     ///        .data(json!({"value": 1}))
     ///        .subject("/test".to_string())
-    ///        .r#type("io.eventsourcingdb.test".to_string())
+    ///        .ty("io.eventsourcingdb.test".to_string())
     ///        .build()
     /// ];
     /// let written_events = client.write_events(candidates, vec![]).await.expect("Failed to write events");
