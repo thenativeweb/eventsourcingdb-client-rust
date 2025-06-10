@@ -27,7 +27,7 @@ jobs:
     - name: Create new version
       if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
       run: |
-        cargo install cargo-set-version
+        cargo install cargo-edit
         cargo set-version ${{ steps.get_next_version.outputs.version }}
         git config --global user.email "hello@thenativeweb.io"
                 git config --global user.name "${{ github.actor }}"
