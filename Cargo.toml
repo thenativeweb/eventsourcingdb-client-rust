@@ -8,11 +8,11 @@ license = "MIT"
 keywords = [
   "eventsourcingdb",
   "esdb",
-	"event",
-	"events",
-	"event sourcing",
-	"event store",
-	"cqrs",
+  "event",
+  "events",
+  "event sourcing",
+  "event store",
+  "cqrs",
 ]
 categories = ["database"]
 
