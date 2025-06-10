@@ -280,7 +280,7 @@ async fn write_single_event_with_traceparent() {
         .source("https://www.eventsourcingdb.io".to_string())
         .data(json!({"value": 1}))
         .subject("/test".to_string())
-        .r#type("io.eventsourcingdb.test".to_string())
+        .ty("io.eventsourcingdb.test".to_string())
         .traceinfo(TraceInfo::Traceparent {
             traceparent: "00-01234567012345670123456701234567-0123456701234567-00".to_string(),
         })
@@ -302,7 +302,7 @@ async fn write_single_event_with_traceparent_and_state() {
         .source("https://www.eventsourcingdb.io".to_string())
         .data(json!({"value": 1}))
         .subject("/test".to_string())
-        .r#type("io.eventsourcingdb.test".to_string())
+        .ty("io.eventsourcingdb.test".to_string())
         .traceinfo(TraceInfo::WithState {
             traceparent: "00-01234567012345670123456701234567-0123456701234567-00".to_string(),
             tracestate: "state=12345".to_string(),

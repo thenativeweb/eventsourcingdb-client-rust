@@ -26,7 +26,8 @@ pub struct EventCandidate {
     /// The type of the event.
     /// This has to be a reverse domain name.
     #[builder(setter(into))]
-    pub r#type: String,
+    #[serde(rename = "type")]
+    pub ty: String,
     /// The traceparent of the event.
     /// This is used for distributed tracing.
     #[builder(default, setter(strip_option))]
@@ -52,7 +53,7 @@ impl TryFrom<cloudevents::Event> for EventCandidate {
             data,
             source: event.source().to_string(),
             subject,
-            r#type: event.ty().to_string(),
+            ty: event.ty().to_string(),
             traceinfo,
         })
     }

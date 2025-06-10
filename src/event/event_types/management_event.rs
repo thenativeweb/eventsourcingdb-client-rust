@@ -22,7 +22,8 @@ pub struct ManagementEvent {
     specversion: String,
     subject: String,
     time: DateTime<Utc>,
-    r#type: String,
+    #[serde(rename = "type")]
+    ty: String,
 }
 
 impl ManagementEvent {
@@ -68,7 +69,7 @@ impl ManagementEvent {
     /// This method is called `ty` to avoid conflicts with the `type` keyword in Rust.
     #[must_use]
     pub fn ty(&self) -> &str {
-        &self.r#type
+        &self.ty
     }
 }
 
@@ -79,7 +80,7 @@ impl From<ManagementEvent> for cloudevents::Event {
         cloudevents::EventBuilderV10::new()
             .source(event.source)
             .subject(event.subject)
-            .ty(event.r#type)
+            .ty(event.ty)
             .id(event.id)
             .time(event.time.to_string())
             .data(event.datacontenttype, event.data)

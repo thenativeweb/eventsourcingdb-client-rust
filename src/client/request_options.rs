@@ -61,6 +61,7 @@ pub enum BoundType {
 #[serde(rename_all = "camelCase")]
 pub struct Bound<'a> {
     /// The type of the bound
+    #[serde(rename = "type")]
     pub bound_type: BoundType,
     /// The value of the bound
     pub id: &'a str,
