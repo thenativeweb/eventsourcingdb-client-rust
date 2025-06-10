@@ -43,6 +43,6 @@ jobs:
     - name: Publish new version
       if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
       run: |
-        echo "${{ secrets.TOKEN_GITHUB_TO_NPM_RW }}" | cargo login
+        echo "${{ secrets.TOKEN_GITHUB_TO_CRATES_RW }}" | cargo login
         cargo package
         cargo publish
