@@ -9,7 +9,7 @@
 //! ## Shortcut suitable for most use cases
 //! This starts a container with the default settings which is most likely what you want.
 //! ```
-//! # use eventsourcingdb_client_rust::container::Container;
+//! # use eventsourcingdb::container::Container;
 //! # tokio_test::block_on(async {
 //! let container = Container::start_default().await;
 //! // let client = container.get_client().await;
@@ -19,7 +19,7 @@
 //! ## Custom configuration
 //! This allows you to configure the container to your needs.
 //! ```
-//! # use eventsourcingdb_client_rust::container::Container;
+//! # use eventsourcingdb::container::Container;
 //! # tokio_test::block_on(async {
 //! let container = Container::builder()
 //!     .with_image_tag("v1.0.0")
@@ -48,7 +48,7 @@ use crate::{client::Client, error::ContainerError};
 ///
 /// By default this container is the same as running this:
 /// ```
-/// # use eventsourcingdb_client_rust::container::Container;
+/// # use eventsourcingdb::container::Container;
 /// # tokio_test::block_on(async {
 /// let builder = Container::builder()
 ///     .with_image_tag("latest")
@@ -144,7 +144,7 @@ impl ContainerBuilder {
 /// You'll most likely want to use the [`Container::start_default`] method to create a new container instance for your tests.
 /// For more details, see the [`crate::container`] module documentation.
 /// ```
-/// # use eventsourcingdb_client_rust::container::Container;
+/// # use eventsourcingdb::container::Container;
 /// # tokio_test::block_on(async {
 /// let container = Container::start_default().await;
 /// // let client = container.get_client().await;

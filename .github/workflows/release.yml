@@ -27,5 +27,22 @@ jobs:
     - name: Create new version
       if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
       run: |
+        cargo install cargo-edit
+        cargo set-version ${{ steps.get_next_version.outputs.version }}
+        git config --global user.email "hello@thenativeweb.io"
+        git config --global user.name "${{ github.actor }}"
+        git add .
+        git commit -m 'chore: Bump version to ${{ steps.get_next_version.outputs.version }}. [skip ci]'
+        git push
         git tag v${{steps.get_next_version.outputs.version}}
         git push origin v${{steps.get_next_version.outputs.version}}
+    - name: Build artifacts
+      if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
+      run: |
+        cargo build
+    - name: Publish new version
+      if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
+      run: |
+        echo "${{ secrets.TOKEN_GITHUB_TO_CRATES_RW }}" | cargo login
+        cargo package
+        cargo publish

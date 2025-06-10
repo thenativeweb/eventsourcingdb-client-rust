@@ -6,7 +6,7 @@ analyze:
 	@cargo doc --all-features --no-deps --document-private-items
 
 test:
-	@cargo test
+	@cargo test --features testcontainer
 
 format:
 	@cargo fmt

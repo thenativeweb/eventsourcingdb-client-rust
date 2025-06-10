@@ -1,6 +1,6 @@
 mod utils;
 
-use eventsourcingdb_client_rust::{
+use eventsourcingdb::{
     client::Precondition,
     container::Container,
     event::{EventCandidate, TraceInfo},

@@ -1,6 +1,6 @@
 mod utils;
 
-use eventsourcingdb_client_rust::container::Container;
+use eventsourcingdb::container::Container;
 use futures::stream::StreamExt;
 use serde_json::json;
 use utils::create_test_eventcandidate;

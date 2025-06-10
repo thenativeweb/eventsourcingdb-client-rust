@@ -1,4 +1,4 @@
-use eventsourcingdb_client_rust::container::Container;
+use eventsourcingdb::container::Container;
 
 #[tokio::test]
 async fn start_stop_testcontainer() {
@@ -31,7 +31,7 @@ async fn generate_client() {
     let generated_client = c.get_client().await.unwrap();
     let base_url = c.get_base_url().await.unwrap();
     let api_token = c.get_api_token();
-    let client = eventsourcingdb_client_rust::client::Client::new(base_url, api_token);
+    let client = eventsourcingdb::client::Client::new(base_url, api_token);
     assert_eq!(client.get_base_url(), generated_client.get_base_url());
     assert_eq!(client.get_api_token(), generated_client.get_api_token());
 }

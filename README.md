@@ -1,4 +1,4 @@
-# eventsourcingdb-client-rust
+# eventsourcingdb
 
 The official Rust client SDK for [EventSourcingDB](https://www.eventsourcingdb.io/).
 
