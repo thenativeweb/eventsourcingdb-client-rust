@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - 'main'
+      - "main"
 
 permissions:
   contents: write
@@ -15,34 +15,35 @@ jobs:
     timeout-minutes: 15
 
     steps:
-    - name: Clone repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: '0'
-    - name: Run QA
-      run: make qa
-    - name: Get next version
-      id: get_next_version
-      uses: thenativeweb/get-next-version@2.6.3
-    - name: Create new version
-      if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
-      run: |
-        cargo install cargo-edit
-        cargo set-version ${{ steps.get_next_version.outputs.version }}
-        git config --global user.email "hello@thenativeweb.io"
-        git config --global user.name "${{ github.actor }}"
-        git add .
-        git commit -m 'chore: Bump version to ${{ steps.get_next_version.outputs.version }}. [skip ci]'
-        git push
-        git tag v${{steps.get_next_version.outputs.version}}
-        git push origin v${{steps.get_next_version.outputs.version}}
-    - name: Build artifacts
-      if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
-      run: |
-        cargo build
-    - name: Publish new version
-      if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
-      run: |
-        echo "${{ secrets.TOKEN_GITHUB_TO_CRATES_RW }}" | cargo login
-        cargo package
-        cargo publish
+      - name: Clone repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+          token: ${{ secrets.TOKEN_GITHUB_TO_GITHUB_REPOSITORIES_RW }}
+      - name: Run QA
+        run: make qa
+      - name: Get next version
+        id: get_next_version
+        uses: thenativeweb/get-next-version@2.6.3
+      - name: Create new version
+        if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
+        run: |
+          cargo install cargo-edit
+          cargo set-version ${{ steps.get_next_version.outputs.version }}
+          git config --global user.email "hello@thenativeweb.io"
+          git config --global user.name "${{ github.actor }}"
+          git add .
+          git commit -m 'chore: Bump version to ${{ steps.get_next_version.outputs.version }}. [skip ci]'
+          git push
+          git tag v${{steps.get_next_version.outputs.version}}
+          git push origin v${{steps.get_next_version.outputs.version}}
+      - name: Build artifacts
+        if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
+        run: |
+          cargo build
+      - name: Publish new version
+        if: ${{ steps.get_next_version.outputs.hasNextVersion == 'true' }}
+        run: |
+          echo "${{ secrets.TOKEN_GITHUB_TO_CRATES_RW }}" | cargo login
+          cargo package
+          cargo publish
