@@ -30,7 +30,7 @@ jobs:
         cargo install cargo-edit
         cargo set-version ${{ steps.get_next_version.outputs.version }}
         git config --global user.email "hello@thenativeweb.io"
-                git config --global user.name "${{ github.actor }}"
+        git config --global user.name "${{ github.actor }}"
         git add .
         git commit -m 'chore: Bump version to ${{ steps.get_next_version.outputs.version }}. [skip ci]'
         git push
