@@ -1,10 +1,6 @@
 mod utils;
 
-use eventsourcingdb::{
-    client::Precondition,
-    container::Container,
-    event::{EventCandidate, TraceInfo},
-};
+use eventsourcingdb::{EventCandidate, Precondition, TraceInfo, container::Container};
 use serde_json::json;
 use utils::{
     assert_event_match_eventcandidate, assert_events_match_eventcandidates,
