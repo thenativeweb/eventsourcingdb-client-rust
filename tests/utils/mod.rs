@@ -1,5 +1,5 @@
 use chrono::{TimeDelta, Utc};
-use eventsourcingdb::event::{Event, EventCandidate};
+use eventsourcingdb::{Event, EventCandidate};
 use serde_json::{Value, json};
 
 pub fn create_test_eventcandidate(

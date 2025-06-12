@@ -1,10 +1,10 @@
 mod utils;
 
 use eventsourcingdb::{
-    client::request_options::{
+    container::Container,
+    request_options::{
         EventMissingStrategy, FromLatestEventOptions, Ordering, ReadEventsRequestOptions,
     },
-    container::Container,
 };
 use futures::TryStreamExt;
 use serde_json::json;

@@ -23,7 +23,7 @@ pub struct ReadEventsRequestOptions<'a> {
 }
 
 /// Options for observing events from the database
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObserveEventsRequestOptions<'a> {
     /// Start reading events from this start event
