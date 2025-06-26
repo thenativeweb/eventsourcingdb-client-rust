@@ -31,9 +31,9 @@ let client = Client::new(base_url, api_token);
 Then call the `ping` function to check whether the instance is reachable. If it is not, the function will return an error:
 
 ```rust
-let result = client.ping();
-if result.is_err() {
-  // ...
+let result = client.ping().await;
+if let Err(err) = result {
+  // handle error...
 }
 ```
 
@@ -42,9 +42,9 @@ if result.is_err() {
 If you want to verify the API token, call `verify_api_token`. If the token is invalid, the function will return an error:
 
 ```rust
-let result = client.verify_api_token();
-if result.is_err() {
-  // ...
+let result = client.verify_api_token().await;
+if let Err(err) = result {
+  // handle error...
 }
 ```
 
@@ -68,7 +68,7 @@ let event = EventCandidate::builder()
     "author": "Arthur C. Clarke",
     "isbn": "978-0756906788",
   }))
-  .build()
+  .build();
 
 let result = client.write_events(vec![event.clone()], vec![]).await;
 match result {
@@ -125,14 +125,17 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsRequestOptions {
       recursive: false,
-      ..Default::default(),
+      from_latest_event: None,
+      order: None,
+      lower_bound: None,
+      upper_bound: None,
     }
   ))
-  .await
+  .await;
 
 match result {
   Err(err) => // ...
-  Some(stream) => {
+  Ok(mut stream) => {
     while let Some(event) = stream.next().await {
       // ...
     }
@@ -152,7 +155,7 @@ let result = client
       ..Default::default(),
     }
   ))
-  .await
+  .await;
 ```
 
 This also allows you to read *all* events ever written. To do so, provide `/` as the subject and set `recursive` to `true`, since all subjects are nested under the root subject.
@@ -170,7 +173,7 @@ let result = client
       ..Default::default(),
     }
   ))
-  .await
+  .await;
 ```
 
 *Note that you can also use the `Chronological` Ordering to explicitly enforce the default order.*
@@ -197,7 +200,7 @@ let result = client
       ..Default::default(),
     }
   ))
-  .await
+  .await;
 ```
 
 #### Starting From the Latest Event of a Given Type
@@ -221,7 +224,7 @@ let result = client
       ..Default::default(),
     }
   ))
-  .await
+  .await;
 ```
 
 *Note that `from_latest_event` and `lower_bound` can not be provided at the same time.*
@@ -233,11 +236,11 @@ To run an EventQL query, call the `run_eventql_query` function and provide the q
 ```rust
 let result = client
   .run_eventql_query("FROM e IN events PROJECT INTO e")
-  .await
+  .await;
 
 match result {
   Err(err) => // ...
-  Some(stream) => {
+  Ok(mut stream) => {
     while let Some(row) = stream.next().await {
       // ...
     }
@@ -259,14 +262,15 @@ let result = client
   .observe_events("/books/42", Some(
     ObserveEventsRequestOptions {
       recursive: false,
-      ..Default::default(),
+      from_latest_event: None,
+      lower_bound: None,
     }
   ))
-  .await
+  .await;
 
 match result {
   Err(err) => // ...
-  Some(stream) => {
+  Ok(mut stream) => {
     while let Some(event) = stream.next().await {
       // ...
     }
@@ -349,7 +353,7 @@ To register an event schema, call the `register_event_schema` function and hand 
 ```rust
 client.register_event_schema(
   "io.eventsourcingdb.library.book-acquired",
-  json!({
+  &json!({
     "type": "object",
     "properties": {
       "title":  { "type": "string" },
@@ -362,7 +366,7 @@ client.register_event_schema(
       "isbn",
     ],
     "additionalProperties": false,
-  }),
+  }).await;,
 )
 ```
 
@@ -371,7 +375,7 @@ client.register_event_schema(
 To list all subjects, call the `list_subjects` function with `/` as the base subject. The function returns a stream from which you can retrieve one subject at a time:
 
 ```rust
-let result := client.list_subjects("/");
+let result = client.list_subjects(Some("/")).await;
 match result {
   Ok(subjects) => // ...
   Err(err) => // ...
@@ -389,7 +393,7 @@ let result := client.list_subjects("/books");
 To list all event types, call the `list_event_types` function. The function returns a stream from which you can retrieve one event type at a time:
 
 ```rust
-let result := client.list_event_types();
+let result := client.list_event_types().await;
 match result {
   Ok(event_types) => // ...
   Err(err) => // ...
