@@ -1,4 +1,4 @@
-use eventsourcingdb::{client::Client, container::Container};
+use eventsourcingdb::{Client, container::Container};
 
 #[tokio::test]
 async fn ping() {

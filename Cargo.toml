@@ -1,6 +1,6 @@
 [package]
 name = "eventsourcingdb"
-version = "0.7.8"
+version = "0.8.0"
 edition = "2024"
 description = "A client library for the EventsourcingDB by the native web."
 repository = "https://github.com/thenativeweb/eventsourcingdb-client-rust"
@@ -25,7 +25,7 @@ cloudevents-sdk = { version = "0.8.0", features = ["reqwest"], optional = true }
 futures = "0.3.31"
 futures-util = "0.3.31"
 jsonschema = "0.30.0"
-reqwest = { version = "0.12.19", features = ["json", "stream"] }
+reqwest = { version = "0.12.20", features = ["json", "stream"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 testcontainers = { version = "0.24.0", features = [
