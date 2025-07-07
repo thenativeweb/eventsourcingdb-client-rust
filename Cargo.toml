@@ -32,7 +32,7 @@ testcontainers = { version = "0.24.0", features = [
   "http_wait",
 ], optional = true }
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["io-util"] }
+tokio = { version = "1.46.1", features = ["io-util"] }
 tokio-util = { version = "0.7.15", features = ["io"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
 typed-builder = "0.21.0"
@@ -40,7 +40,7 @@ url = "2.5.4"
 
 [dev-dependencies]
 testcontainers = { version = "0.24.0", features = ["http_wait"] }
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.46.1", features = ["full"] }
 tokio-test = "0.4.4"
 
 # This is metadata required for working docs on docs.rs
