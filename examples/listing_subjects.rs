@@ -1,11 +1,11 @@
-use eventsourcingdb::client::Client;
+use eventsourcingdb::{client::Client, container::Container};
 use futures::StreamExt;
-use url::Url;
 
 #[tokio::main]
 async fn main() {
-    let base_url: Url = "localhost:3000".parse().unwrap();
-    let api_token = "secret";
+    let db = Container::start_default().await.unwrap();
+    let base_url = db.get_base_url().await.unwrap();
+    let api_token = db.get_api_token();
     let client = Client::new(base_url, api_token);
 
     let result = client.list_subjects(Some("/")).await;
