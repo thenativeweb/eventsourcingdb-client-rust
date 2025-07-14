@@ -1,5 +1,5 @@
 use eventsourcingdb::{
-    client::{Client, request_options::ReadEventsRequestOptions},
+    client::{Client, request_options::ReadEventsOptions},
     container::Container,
 };
 use futures::StreamExt;
@@ -14,7 +14,7 @@ async fn main() {
     let result = client
         .read_events(
             "/books/42",
-            Some(ReadEventsRequestOptions {
+            Some(ReadEventsOptions {
                 recursive: false,
                 from_latest_event: None,
                 order: None,

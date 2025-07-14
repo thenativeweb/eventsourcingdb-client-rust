@@ -203,7 +203,7 @@ impl Client {
     pub async fn read_events<'a>(
         &self,
         subject: &'a str,
-        options: Option<request_options::ReadEventsRequestOptions<'a>>,
+        options: Option<request_options::ReadEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         let response = self
             .request_streaming(ReadEventsRequest { subject, options })
@@ -249,7 +249,7 @@ impl Client {
     pub async fn observe_events<'a>(
         &self,
         subject: &'a str,
-        options: Option<request_options::ObserveEventsRequestOptions<'a>>,
+        options: Option<request_options::ObserveEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         let response = self
             .request_streaming(ObserveEventsRequest { subject, options })

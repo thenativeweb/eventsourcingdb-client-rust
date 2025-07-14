@@ -37,7 +37,7 @@ if let Err(err) = result {
 }
 ```
 
-*Note that `Ping` does not require authentication, so the call may succeed even if the API token is invalid.*
+*Note that `ping` does not require authentication, so the call may succeed even if the API token is invalid.*
 
 If you want to verify the API token, call `verify_api_token`. If the token is invalid, the function will return an error:
 
@@ -54,7 +54,7 @@ Call the `write_events` function and hand over a vector with one or more events.
 
 Specify `source`, `subject`, `type` (using `ty`), and `data` according to the [CloudEvents](https://docs.eventsourcingdb.io/fundamentals/cloud-events/) format.
 
-For `data` provide a json object using a `serde_json:Value`.
+For `data` provide a JSON object using a `serde_json:Value`.
 
 The function returns the written events, including the fields added by the server:
 
@@ -79,7 +79,7 @@ match result {
 
 #### Using the `IsSubjectPristine` precondition
 
-If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `IsSubjectPristine` Precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `IsSubjectPristine` precondition to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
@@ -96,12 +96,12 @@ match result {
 
 #### Using the `IsSubjectOnEventId` precondition
 
-If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `IsSubjectOnEventID` Precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `IsSubjectOnEventId` precondition to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectPristine {
+  vec![Precondition::IsSubjectOnEventId {
     subject: "/books/42".to_string(),
     event_id: "0".to_string(),
   }],
@@ -123,7 +123,7 @@ The function returns a stream from which you can retrieve one event at a time:
 ```rust
 let result = client
   .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+    ReadEventsOptions {
       recursive: false,
       from_latest_event: None,
       order: None,
@@ -150,7 +150,7 @@ If you want to read not only all the events of a subject, but also the events of
 ```rust
 let result = client
   .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+    ReadEventsOptions {
       recursive: true,
       ..Default::default(),
     }
@@ -167,7 +167,7 @@ By default, events are read in chronological order. To read in anti-chronologica
 ```rust
 let result = client
   .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+    ReadEventsOptions {
       recursive: false,
       order: Some(Ordering::Antichronological)
       ..Default::default(),
@@ -187,7 +187,7 @@ Specify the ID and whether to include or exclude it, for both the lower and uppe
 ```rust
 let result = client
   .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+    ReadEventsOptions {
       recursive: false,
       lower_bound: Some(Bound {
         bound_type: BoundType::Inclusive,
@@ -212,13 +212,13 @@ Possible options are `ReadNothing`, which skips reading entirely, or `ReadyEvery
 ```rust
 let result = client
   .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+    ReadEventsOptions {
       recursive: false,
       from_latest_event: Some(
         FromLatestEventOptions {
           subject: "/books/42",
           ty: "io.eventsourcingdb.library.book-borrowed",
-          if_event_is_missing: EventMissingStrategy::ReadEverything,
+          if_event_is_missing: ReadEventMissingStrategy::ReadEverything,
         }
       )
       ..Default::default(),
@@ -256,11 +256,10 @@ To observe all events of a subject, call the `observe_events` function with the 
 
 The function returns a stream from which you can retrieve one event at a time:
 
-
 ```rust
 let result = client
   .observe_events("/books/42", Some(
-    ObserveEventsRequestOptions {
+    ObserveEventsOptions {
       recursive: false,
       from_latest_event: None,
       lower_bound: None,
@@ -285,7 +284,7 @@ If you want to observe not only all the events of a subject, but also the events
 ```rust
 let result = client
   .observe_events("/books/42", Some(
-    ObserveEventsRequestOptions {
+    ObserveEventsOptions {
       recursive: true,
       ..Default::default(),
     }
@@ -303,8 +302,8 @@ Specify the ID and whether to include or exclude it:
 
 ```rust
 let result = client
-  .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+  .observe_events("/books/42", Some(
+    ObserveEventsOptions {
       recursive: false,
       lower_bound: Some(Bound {
         bound_type: BoundType::Inclusive,
@@ -324,14 +323,14 @@ Possible options are `WaitForEvent`, which waits for an event of the given type 
 
 ```rust
 let result = client
-  .read_events("/books/42", Some(
-    ReadEventsRequestOptions {
+  .observe_events("/books/42", Some(
+    ObserveEventsOptions {
       recursive: false,
       from_latest_event: Some(
         ObserveFromLatestEventOptions {
           subject: "/books/42",
           ty: "io.eventsourcingdb.library.book-borrowed",
-          if_event_is_missing: EventMissingStrategy::ObserveEverything,
+          if_event_is_missing: ObserveEventMissingStrategy::ObserveEverything,
         }
       )
       ..Default::default(),
