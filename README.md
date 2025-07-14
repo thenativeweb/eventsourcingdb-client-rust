@@ -125,10 +125,7 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsOptions {
       recursive: false,
-      from_latest_event: None,
-      order: None,
-      lower_bound: None,
-      upper_bound: None,
+      ...Default::default(),
     }
   ))
   .await;
@@ -162,7 +159,7 @@ This also allows you to read *all* events ever written. To do so, provide `/` as
 
 #### Reading in Anti-Chronological Order
 
-By default, events are read in chronological order. To read in anti-chronological order, provide the `order` option and set it using the `Antichronological` Ordering:
+By default, events are read in chronological order. To read in anti-chronological order, provide the `order` option and set it using the `Antichronological` ordering:
 
 ```rust
 let result = client
@@ -176,7 +173,7 @@ let result = client
   .await;
 ```
 
-*Note that you can also use the `Chronological` Ordering to explicitly enforce the default order.*
+*Note that you can also use the `Chronological` ordering to explicitly enforce the default order.*
 
 #### Specifying Bounds
 
@@ -207,7 +204,7 @@ let result = client
 
 To read starting from the latest event of a given type, provide the `from_latest_event` option and specify the subject, the type, and how to proceed if no such event exists.
 
-Possible options are `ReadNothing`, which skips reading entirely, or `ReadyEverything`, which effectively behaves as if `from_latest_event` was not specified:
+Possible options are `ReadNothing`, which skips reading entirely, or `ReadEverything`, which effectively behaves as if `from_latest_event` was not specified:
 
 ```rust
 let result = client
