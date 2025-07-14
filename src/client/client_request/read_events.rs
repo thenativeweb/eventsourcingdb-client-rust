@@ -1,7 +1,7 @@
 use reqwest::Method;
 use serde::Serialize;
 
-use crate::{client::request_options::ReadEventsRequestOptions, error::ClientError, event::Event};
+use crate::{client::request_options::ReadEventsOptions, error::ClientError, event::Event};
 
 use super::{ClientRequest, StreamingRequest};
 
@@ -9,7 +9,7 @@ use super::{ClientRequest, StreamingRequest};
 pub struct ReadEventsRequest<'a> {
     pub subject: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<ReadEventsRequestOptions<'a>>,
+    pub options: Option<ReadEventsOptions<'a>>,
 }
 
 impl ClientRequest for ReadEventsRequest<'_> {

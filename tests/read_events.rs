@@ -3,7 +3,7 @@ mod utils;
 use eventsourcingdb::{
     container::Container,
     request_options::{
-        EventMissingStrategy, FromLatestEventOptions, Ordering, ReadEventsRequestOptions,
+        Ordering, ReadEventMissingStrategy, ReadEventsOptions, ReadFromLatestEventOptions,
     },
 };
 use futures::TryStreamExt;
@@ -120,7 +120,7 @@ async fn read_recursive() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
+            Some(ReadEventsOptions {
                 recursive: true,
                 ..Default::default()
             }),
@@ -155,7 +155,7 @@ async fn read_not_recursive() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
+            Some(ReadEventsOptions {
                 recursive: false,
                 ..Default::default()
             }),
@@ -183,7 +183,7 @@ async fn read_chronological() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
+            Some(ReadEventsOptions {
                 order: Some(Ordering::Chronological),
                 ..Default::default()
             }),
@@ -211,7 +211,7 @@ async fn read_antichronological() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
+            Some(ReadEventsOptions {
                 order: Some(Ordering::Antichronological),
                 ..Default::default()
             }),
@@ -241,11 +241,11 @@ async fn read_everything_from_missing_latest_event() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
-                from_latest_event: Some(FromLatestEventOptions {
+            Some(ReadEventsOptions {
+                from_latest_event: Some(ReadFromLatestEventOptions {
                     subject: "/",
                     ty: "io.eventsourcingdb.test.does-not-exist",
-                    if_event_is_missing: EventMissingStrategy::ReadEverything,
+                    if_event_is_missing: ReadEventMissingStrategy::ReadEverything,
                 }),
                 ..Default::default()
             }),
@@ -273,11 +273,11 @@ async fn read_nothing_from_missing_latest_event() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
-                from_latest_event: Some(FromLatestEventOptions {
+            Some(ReadEventsOptions {
+                from_latest_event: Some(ReadFromLatestEventOptions {
                     subject: "/",
                     ty: "io.eventsourcingdb.test.does-not-exist",
-                    if_event_is_missing: EventMissingStrategy::ReadNothing,
+                    if_event_is_missing: ReadEventMissingStrategy::ReadNothing,
                 }),
                 ..Default::default()
             }),
@@ -316,11 +316,11 @@ async fn read_from_latest_event() {
     let events_stream = client
         .read_events(
             "/test",
-            Some(ReadEventsRequestOptions {
-                from_latest_event: Some(FromLatestEventOptions {
+            Some(ReadEventsOptions {
+                from_latest_event: Some(ReadFromLatestEventOptions {
                     subject: "/marker",
                     ty: "io.eventsourcingdb.test",
-                    if_event_is_missing: EventMissingStrategy::ReadNothing,
+                    if_event_is_missing: ReadEventMissingStrategy::ReadNothing,
                 }),
                 ..Default::default()
             }),

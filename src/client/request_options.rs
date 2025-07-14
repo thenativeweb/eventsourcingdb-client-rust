@@ -5,10 +5,10 @@ use serde::Serialize;
 /// Options for reading events from the database
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReadEventsRequestOptions<'a> {
+pub struct ReadEventsOptions<'a> {
     /// Start reading events from this start event
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_latest_event: Option<FromLatestEventOptions<'a>>,
+    pub from_latest_event: Option<ReadFromLatestEventOptions<'a>>,
     /// Lower bound of events to read
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lower_bound: Option<Bound<'a>>,
@@ -25,10 +25,10 @@ pub struct ReadEventsRequestOptions<'a> {
 /// Options for observing events from the database
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ObserveEventsRequestOptions<'a> {
+pub struct ObserveEventsOptions<'a> {
     /// Start reading events from this start event
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_latest_event: Option<FromLatestEventOptions<'a>>,
+    pub from_latest_event: Option<ObserveFromLatestEventOptions<'a>>,
     /// Lower bound of events to read
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lower_bound: Option<Bound<'a>>,
@@ -67,25 +67,48 @@ pub struct Bound<'a> {
     pub id: &'a str,
 }
 
-/// The strategy for handling missing events
+/// The strategy for handling missing events while reading
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum EventMissingStrategy {
+pub enum ReadEventMissingStrategy {
     /// Read all events if the required one is missing
     ReadEverything,
     /// Read no events if the required one is missing
     ReadNothing,
 }
 
-/// Options for reading events from the start reading at
+/// The strategy for handling missing events while observing
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ObserveEventMissingStrategy {
+    /// Observe all events if the required one is missing
+    ObserveEverything,
+    /// Wait for the event until observing
+    WaitForEvent,
+}
+
+/// Options for reading events from the latest event of certain type or subject
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FromLatestEventOptions<'a> {
+pub struct ReadFromLatestEventOptions<'a> {
     /// The strategy for handling missing events
-    pub if_event_is_missing: EventMissingStrategy,
+    pub if_event_is_missing: ReadEventMissingStrategy,
     /// The subject the event should be on
     pub subject: &'a str,
     /// The type of the event to read from
+    #[serde(rename = "type")]
+    pub ty: &'a str,
+}
+
+/// Options for observe events from the latest event of certain type or subject
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObserveFromLatestEventOptions<'a> {
+    /// The strategy for handling missing events
+    pub if_event_is_missing: ObserveEventMissingStrategy,
+    /// The subject the event should be on
+    pub subject: &'a str,
+    /// The type of the event to observe from
     #[serde(rename = "type")]
     pub ty: &'a str,
 }
