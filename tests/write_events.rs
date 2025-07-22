@@ -229,7 +229,7 @@ async fn write_events_with_is_eventql_true_condition() {
             }],
         )
         .await;
-    assert!(result.is_err(), "Expected an error, but got: {:?}", result);
+    assert!(result.is_ok(), "Expected an ok, but got: {:?}", result);
 }
 
 #[tokio::test]
