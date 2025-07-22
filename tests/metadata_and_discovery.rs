@@ -1,10 +1,11 @@
-use eventsourcingdb::container::Container;
+mod utils;
 use futures::StreamExt;
 use serde_json::json;
+use utils::create_test_container;
 
 #[tokio::test]
 async fn register_event_schema() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     client
         .register_event_schema(
@@ -28,7 +29,7 @@ async fn register_event_schema() {
 
 #[tokio::test]
 async fn register_invalid_event_schema() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let res = client
         .register_event_schema(
@@ -38,12 +39,12 @@ async fn register_invalid_event_schema() {
             }),
         )
         .await;
-    assert!(res.is_err(), "Expected an error, but got: {:?}", res);
+    assert!(res.is_err(), "Expected an error, but got: {res:?}");
 }
 
 #[tokio::test]
 async fn list_all_subjects() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let res = client.list_subjects(None).await;
     match res {
@@ -51,11 +52,10 @@ async fn list_all_subjects() {
             let subjects = subjects.collect::<Vec<_>>().await;
             assert!(
                 subjects.is_empty(),
-                "Expected no subjects, but got: {:?}",
-                subjects
+                "Expected no subjects, but got: {subjects:?}"
             );
         }
-        Err(err) => panic!("Failed to list subjects: {:?}", err),
+        Err(err) => panic!("Failed to list subjects: {err:?}"),
     }
 }
 
@@ -65,7 +65,7 @@ async fn list_all_subjects() {
 
 #[tokio::test]
 async fn list_all_event_types() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let test_event_type = "io.eventsourcingdb.test";
     let schema = json!({
@@ -90,8 +90,7 @@ async fn list_all_event_types() {
             let mut event_types = event_types.collect::<Vec<_>>().await;
             assert!(
                 event_types.len() == 1,
-                "Expected one event types, but got: {:?}",
-                event_types
+                "Expected one event types, but got: {event_types:?}"
             );
             assert!(event_types[0].is_ok(), "Expected event type to be ok");
             let response_event_type = event_types.pop().unwrap().unwrap();
@@ -113,7 +112,7 @@ async fn list_all_event_types() {
                 response_event_type.is_phantom
             );
         }
-        Err(err) => panic!("Failed to list event types: {:?}", err),
+        Err(err) => panic!("Failed to list event types: {err:?}"),
     }
 }
 

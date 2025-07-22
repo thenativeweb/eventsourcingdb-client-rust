@@ -1,13 +1,12 @@
 mod utils;
-
-use eventsourcingdb::container::Container;
 use futures::stream::StreamExt;
 use serde_json::json;
+use utils::create_test_container;
 use utils::create_test_eventcandidate;
 
 #[tokio::test]
 async fn observe_existing_events() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidate = create_test_eventcandidate("/test", json!({"value": 1}));
     let written = client
@@ -30,7 +29,7 @@ async fn observe_existing_events() {
 
 #[tokio::test]
 async fn keep_observing_events() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
 
     let mut events_stream = client

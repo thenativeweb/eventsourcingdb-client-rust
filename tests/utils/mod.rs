@@ -1,6 +1,14 @@
 use chrono::{TimeDelta, Utc};
-use eventsourcingdb::{Event, EventCandidate};
+use eventsourcingdb::{Event, EventCandidate, container::Container};
 use serde_json::{Value, json};
+
+pub async fn create_test_container() -> Container {
+    Container::builder()
+        .with_image_tag("preview")
+        .start()
+        .await
+        .expect("Failed to start test container")
+}
 
 pub fn create_test_eventcandidate(
     subject: impl ToString,

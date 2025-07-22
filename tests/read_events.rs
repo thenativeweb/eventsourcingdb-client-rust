@@ -1,34 +1,32 @@
 mod utils;
 
-use eventsourcingdb::{
-    container::Container,
-    request_options::{
-        Ordering, ReadEventMissingStrategy, ReadEventsOptions, ReadFromLatestEventOptions,
-    },
+use eventsourcingdb::request_options::{
+    Ordering, ReadEventMissingStrategy, ReadEventsOptions, ReadFromLatestEventOptions,
 };
 use futures::TryStreamExt;
 use serde_json::json;
+use utils::create_test_container;
 use utils::{
     assert_event_match_eventcandidate, create_numbered_eventcandidates, create_test_eventcandidate,
 };
 
 #[tokio::test]
 async fn make_read_call() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let events_stream = client
         .read_events("/", None)
         .await
         .expect("Failed to read events");
     let events: Result<Vec<_>, _> = events_stream.try_collect().await;
-    assert!(events.is_ok(), "Failed to write events: {:?}", events);
+    assert!(events.is_ok(), "Failed to write events: {events:?}");
     let events = events.expect("Failed to read events");
     assert_eq!(events.len(), 0);
 }
 
 #[tokio::test]
 async fn make_read_call_with_event() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidate = create_test_eventcandidate("/test", json!({"value": 1}));
     let written = client
@@ -50,7 +48,7 @@ async fn make_read_call_with_event() {
 
 #[tokio::test]
 async fn make_read_call_with_multiple_events() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     let written = client
@@ -72,7 +70,7 @@ async fn make_read_call_with_multiple_events() {
 
 #[tokio::test]
 async fn read_from_exact_topic() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidate = create_test_eventcandidate("/test", json!({"value": 1}));
     client
@@ -102,7 +100,7 @@ async fn read_from_exact_topic() {
 
 #[tokio::test]
 async fn read_recursive() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidate_parent = create_test_eventcandidate("/test", json!({"value": 1}));
     let event_candidate_child = create_test_eventcandidate("/test/sub", json!({"value": 2}));
@@ -137,7 +135,7 @@ async fn read_recursive() {
 
 #[tokio::test]
 async fn read_not_recursive() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidate_parent = create_test_eventcandidate("/test", json!({"value": 1}));
     let event_candidate_child = create_test_eventcandidate("/test/sub", json!({"value": 2}));
@@ -172,7 +170,7 @@ async fn read_not_recursive() {
 
 #[tokio::test]
 async fn read_chronological() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     let written = client
@@ -200,7 +198,7 @@ async fn read_chronological() {
 
 #[tokio::test]
 async fn read_antichronological() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     let written = client
@@ -230,7 +228,7 @@ async fn read_antichronological() {
 
 #[tokio::test]
 async fn read_everything_from_missing_latest_event() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     let written = client
@@ -262,7 +260,7 @@ async fn read_everything_from_missing_latest_event() {
 
 #[tokio::test]
 async fn read_nothing_from_missing_latest_event() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     client
@@ -294,7 +292,7 @@ async fn read_nothing_from_missing_latest_event() {
 
 #[tokio::test]
 async fn read_from_latest_event() {
-    let container = Container::start_default().await.unwrap();
+    let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let event_candidates = create_numbered_eventcandidates(10);
     client
