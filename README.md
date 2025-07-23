@@ -114,6 +114,23 @@ match result {
 
 *Note that according to the CloudEvents standard, event IDs must be of type string.*
 
+#### Using the `IsEventQLTrue` precondition
+
+If you want to write events depending on an EventQL query, use the `IsEventQLTrue` precondition to create a precondition and pass it in a vector as the second argument:
+
+```rust
+let result = client.write_events(
+  vec![event.clone()],
+  vec![Precondition::IsEventQLTrue {
+    query: "FROM e IN events WHERE e.type == 'io.eventsourcingdb.library.book-borrowed' PROJECT INTO COUNT() < 10".to_string(),
+  }],
+).await;
+match result {
+  Ok(written_events) => // ...
+  Err(err) => // ...
+}
+```
+
 ### Reading Events
 
 To read all events of a subject, call the `read_events` function with the subject and an options object. Set the `recursive` option to `false`. This ensures that only events of the given subject are returned, not events of nested subjects.
