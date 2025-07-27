@@ -22,14 +22,15 @@ mod precondition;
 pub mod request_options;
 
 use crate::{
+    client::client_request::ReadEventTypeRequest,
     error::ClientError,
     event::{Event, EventCandidate, ManagementEvent},
+    request_options::EventType,
 };
 use client_request::{
     ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest,
     OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest,
     RunEventqlQueryRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
-    list_event_types::EventType,
 };
 use futures::Stream;
 pub use precondition::Precondition;
@@ -207,6 +208,52 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         let response = self
             .request_streaming(ReadEventsRequest { subject, options })
+            .await?;
+        Ok(response)
+    }
+
+    /// Reads a specific event type from the DB instance.
+    ///
+    /// ```
+    /// use eventsourcingdb::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb::container::Container::start_default().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
+    /// let event_type = "io.eventsourcingdb.test";
+    /// let schema = json!({
+    ///     "type": "object",
+    ///     "properties": {
+    ///         "id": {
+    ///             "type": "string"
+    ///         },
+    ///         "name": {
+    ///             "type": "string"
+    ///         }
+    ///     },
+    ///     "required": ["id", "name"]
+    /// });
+    /// client.register_event_schema(event_type, &schema).await.expect("Failed to register event types");
+    /// let type_info = client.read_event_type(event_type).await.expect("Failed to read event type");
+    /// println!("Found Type {} with schema {:?}", type_info.name, type_info.schema);
+    /// # })
+    /// ```
+    ///
+    /// # Errors
+    /// This function will return an error if the request fails or if the URL is invalid.
+    pub async fn read_event_type(
+        &self,
+        event_type: &str,
+    ) -> Result<EventType, ClientError> {
+        let response = self
+            .request_oneshot(ReadEventTypeRequest {
+                event_type: event_type.to_string(),
+            })
             .await?;
         Ok(response)
     }
