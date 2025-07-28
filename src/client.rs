@@ -246,10 +246,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    pub async fn read_event_type(
-        &self,
-        event_type: &str,
-    ) -> Result<EventType, ClientError> {
+    pub async fn read_event_type(&self, event_type: &str) -> Result<EventType, ClientError> {
         let response = self
             .request_oneshot(ReadEventTypeRequest {
                 event_type: event_type.to_string(),
