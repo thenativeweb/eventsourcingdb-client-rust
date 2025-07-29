@@ -169,12 +169,23 @@ impl Container {
     /// Shortcut method to start the container with default settings.
     ///
     /// This is the same as calling [`Container::builder`] and then [`ContainerBuilder::start`].
-    /// In most cases this will create a contaienr with the latest image tag and a working configuration.
+    /// In most cases this will create a container with the latest image tag and a working configuration.
     ///
     /// # Errors
     /// This functions returns the errors of [`ContainerBuilder::start()`]
     pub async fn start_default() -> Result<Container, ContainerError> {
         Self::builder().start().await
+    }
+
+    /// Shortcut method to start the container with the preview tag and default settings.
+    ///
+    /// This is the same as calling [`Container::builder`], [`Container::with_image_tag("preview")`] and then [`ContainerBuilder::start`].
+    /// In most cases this will create a container with the latest image tag and a working configuration.
+    ///
+    /// # Errors
+    /// This functions returns the errors of [`ContainerBuilder::start()`]
+    pub async fn start_preview() -> Result<Container, ContainerError> {
+        Self::builder().with_image_tag("preview").start().await
     }
 
     /// Get the host of the container.

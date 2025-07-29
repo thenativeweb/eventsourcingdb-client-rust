@@ -219,7 +219,7 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_default().await.unwrap();
+    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
