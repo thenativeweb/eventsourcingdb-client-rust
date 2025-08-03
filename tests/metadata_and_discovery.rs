@@ -116,4 +116,50 @@ async fn list_all_event_types() {
     }
 }
 
+#[tokio::test]
+async fn read_single_event_type() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let test_event_type = "io.eventsourcingdb.test";
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string"
+            },
+            "name": {
+                "type": "string"
+            }
+        },
+        "required": ["id", "name"]
+    });
+    client
+        .register_event_schema(test_event_type, &schema)
+        .await
+        .expect("Failed to register event schema");
+    let res = client.read_event_type(test_event_type).await;
+    match res {
+        Ok(event_type) => {
+            assert_eq!(
+                event_type.name, test_event_type,
+                "Expected event type to be 'io.eventsourcingdb.test', but got: {:?}",
+                event_type.name
+            );
+            assert_eq!(
+                event_type.schema.as_ref(),
+                Some(&schema),
+                "Expected event type schema to be {:?}, but got: {:?}",
+                schema,
+                event_type.schema
+            );
+            assert!(
+                event_type.is_phantom,
+                "Expected event type is_phantom to be true, but got: {:?}",
+                event_type.is_phantom
+            );
+        }
+        Err(err) => panic!("Failed to read event type: {err:?}"),
+    }
+}
+
 // TODO!: add list event types test after writing to db

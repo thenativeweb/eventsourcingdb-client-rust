@@ -412,6 +412,20 @@ match result {
   Err(err) => // ...
 }
 ```
+
+### Listing a Specific Event Types
+
+To list a specific event type, call the `read_event_type` function. The function returns the detailed event type, which includes the schema:
+
+```rust
+let event_type_name = "io.eventsourcingdb.library.book-acquired";
+let result := client.read_event_type(event_type_name).await;
+match result {
+  Ok(event_type) => // ...
+  Err(err) => // ...
+}
+```
+
 ### Using Testcontainers
 
 Call the `Container::start_default()` function, get a client, and run your test code:

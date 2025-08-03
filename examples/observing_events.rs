@@ -6,7 +6,7 @@ use futures::StreamExt;
 
 #[tokio::main]
 async fn main() {
-    let db = Container::start_default().await.unwrap();
+    let db = Container::start_preview().await.unwrap();
     let base_url = db.get_base_url().await.unwrap();
     let api_token = db.get_api_token();
     let client = Client::new(base_url, api_token);
@@ -26,7 +26,7 @@ async fn main() {
         Err(err) => panic!("{}", err),
         Ok(mut stream) => {
             while let Some(Ok(event)) = stream.next().await {
-                println!("{:?}", event)
+                println!("{event:?}")
             }
         }
     }
