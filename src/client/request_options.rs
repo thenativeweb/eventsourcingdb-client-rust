@@ -1,6 +1,7 @@
 //! This module contains supporting options for the client requests.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Options for reading events from the database
 #[derive(Debug, Default, Clone, Serialize)]
@@ -111,4 +112,17 @@ pub struct ObserveFromLatestEventOptions<'a> {
     /// The type of the event to observe from
     #[serde(rename = "type")]
     pub ty: &'a str,
+}
+
+/// Represents an event type in the database
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EventType {
+    /// The name of the event type
+    #[serde(rename = "eventType")]
+    pub name: String,
+    /// Whether the event type is a phantom type
+    pub is_phantom: bool,
+    /// The schema of the event type, if available
+    pub schema: Option<Value>,
 }
