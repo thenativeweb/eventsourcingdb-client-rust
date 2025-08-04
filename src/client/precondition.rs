@@ -20,8 +20,8 @@ pub enum Precondition {
         event_id: String,
     },
     /// Check if an EventQL query returns true
-    #[serde(rename = "isEventQlTrue")]
-    IsEventQLTrue {
+    #[serde(rename = "isEventQlQueryTrue")]
+    IsEventQLQueryTrue {
         /// The EventQL query to check
         query: String,
     },

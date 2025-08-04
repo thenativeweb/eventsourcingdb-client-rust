@@ -224,7 +224,7 @@ async fn write_events_with_is_eventql_true_condition() {
     let result = client
         .write_events(
             event_candidates.clone(),
-            vec![Precondition::IsEventQLTrue {
+            vec![Precondition::IsEventQLQueryTrue {
                 query: "FROM e IN events PROJECT INTO COUNT() == 0".to_string(),
             }],
         )
