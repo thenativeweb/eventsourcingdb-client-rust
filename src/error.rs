@@ -70,4 +70,12 @@ pub enum EventError {
     #[cfg(feature = "cloudevents")]
     #[error("The passed cloudevent is invalid")]
     InvalidCloudevent,
+    /// Hash verification failed
+    #[error("Hash verification failed")]
+    HashVerificationFailed {
+        /// Expected hash as in the DB
+        expected: String,
+        /// Actual hash as computed
+        actual: String,
+    },
 }

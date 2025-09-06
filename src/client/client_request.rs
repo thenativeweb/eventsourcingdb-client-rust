@@ -69,23 +69,28 @@ pub trait OneShotRequest: ClientRequest {
 
 /// A line in any json-nd stream coming from the database
 #[derive(Deserialize, Debug)]
-#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
+#[serde(untagged)]
 enum StreamLineItem<T> {
-    /// An error occured during the request
-    Error { error: String },
-    /// A heardbeat message was sent to keep the connection alive.
-    /// This is only used when observing events, but it does not hurt to have it everywhere.
-    Heartbeat(Value),
+    Predefined(PredefinedStreamLineItem),
     /// A successful response from the database
     /// Since the exact type of the payload is not known at this point, we use this as a fallback case.
     /// Every request item gets put in here and the type can be checked later on.
     /// The type name checking is only for semantic reasons, as the payload is already parsed as the correct type at this point.
-    #[serde(untagged)]
     Ok {
         #[serde(rename = "type")]
         ty: String,
         payload: T,
     },
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
+enum PredefinedStreamLineItem {
+    /// An error occured during the request
+    Error { error: String },
+    /// A heardbeat message was sent to keep the connection alive.
+    /// This is only used when observing events, but it does not hurt to have it everywhere.
+    Heartbeat(Value),
 }
 
 /// Represents a request to the database that expects a stream of responses
@@ -113,11 +118,13 @@ pub trait StreamingRequest: ClientRequest {
                 .filter_map(|o| async {
                     match o {
                         // An error was passed by the database, so we forward it as an error.
-                        Ok(StreamLineItem::Error { error }) => {
-                            Some(Err(ClientError::DBError(error)))
-                        }
+                        Ok(StreamLineItem::Predefined(PredefinedStreamLineItem::Error {
+                            error,
+                        })) => Some(Err(ClientError::DBError(error))),
                         // A heartbeat message was sent, which we ignore.
-                        Ok(StreamLineItem::Heartbeat(_value)) => None,
+                        Ok(StreamLineItem::Predefined(PredefinedStreamLineItem::Heartbeat(
+                            _value,
+                        ))) => None,
                         // A successful response was sent with the correct type.
                         Ok(StreamLineItem::Ok { payload, ty }) if ty == Self::ITEM_TYPE_NAME => {
                             Some(Ok(payload))
