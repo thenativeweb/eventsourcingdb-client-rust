@@ -19,7 +19,7 @@ pub use read_event_type::ReadEventTypeRequest;
 pub use read_events::ReadEventsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
 pub use run_eventql_query::RunEventqlQueryRequest;
-use serde_json::Value;
+use serde_json::value::RawValue;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
@@ -67,30 +67,13 @@ pub trait OneShotRequest: ClientRequest {
     }
 }
 
-/// A line in any json-nd stream coming from the database
+/// A line in a json-nd stream coming from the database
+/// The body is parsed as a [`RawValue`], because some of the types need the raw string for internal usage.
 #[derive(Deserialize, Debug)]
-#[serde(untagged)]
-enum StreamLineItem<T> {
-    Predefined(PredefinedStreamLineItem),
-    /// A successful response from the database
-    /// Since the exact type of the payload is not known at this point, we use this as a fallback case.
-    /// Every request item gets put in here and the type can be checked later on.
-    /// The type name checking is only for semantic reasons, as the payload is already parsed as the correct type at this point.
-    Ok {
-        #[serde(rename = "type")]
-        ty: String,
-        payload: T,
-    },
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
-enum PredefinedStreamLineItem {
-    /// An error occured during the request
-    Error { error: String },
-    /// A heardbeat message was sent to keep the connection alive.
-    /// This is only used when observing events, but it does not hurt to have it everywhere.
-    Heartbeat(Value),
+struct StreamLineItem {
+    #[serde(rename = "type")]
+    ty: String,
+    payload: Box<RawValue>,
 }
 
 /// Represents a request to the database that expects a stream of responses
@@ -103,36 +86,25 @@ pub trait StreamingRequest: ClientRequest {
     ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
         Box::pin(
             Self::lines_stream(response)
-                .map(|maybe_line| {
-                    let line = maybe_line?;
-                    // This line does the heavy lifting of parsing the json-nd line into the correct type.
-                    // There's some Rust typesystem glory involved here, so let's break it down:
-                    // First of all `serde_json::from_str` is used to parse any json `&str` into the type we want to have (in this case a `StreamLineItem`).
-                    // `StreamLineItem` in turn is generic over `Self::ItemType`, which is the type that is expected by the exact response implementation and can change.
-                    // This means, that this will throw an error if the line is invalid json or the string cannot be parsed into an error, heartbeat or the expected type.
-                    // Because of this, we can guarantee after this line, that the payload of the `StreamLineItem` is of the correct type and no further checks are needed.
-                    Ok(serde_json::from_str::<StreamLineItem<Self::ItemType>>(
-                        line.as_str(),
-                    )?)
-                })
+                .map(|line| Ok(serde_json::from_str::<StreamLineItem>(line?.as_str())?))
                 .filter_map(|o| async {
                     match o {
-                        // An error was passed by the database, so we forward it as an error.
-                        Ok(StreamLineItem::Predefined(PredefinedStreamLineItem::Error {
-                            error,
-                        })) => Some(Err(ClientError::DBError(error))),
-                        // A heartbeat message was sent, which we ignore.
-                        Ok(StreamLineItem::Predefined(PredefinedStreamLineItem::Heartbeat(
-                            _value,
-                        ))) => None,
-                        // A successful response was sent with the correct type.
-                        Ok(StreamLineItem::Ok { payload, ty }) if ty == Self::ITEM_TYPE_NAME => {
-                            Some(Ok(payload))
-                        }
-                        // A successful response was sent, but the type does not match the expected type.
-                        Ok(StreamLineItem::Ok { ty, .. }) => {
-                            Some(Err(ClientError::InvalidResponseType(ty)))
-                        }
+                        // A line was successfully parsed.
+                        Ok(StreamLineItem { payload, ty }) => match ty.as_str() {
+                            // This is the expected type, so we try to parse it.
+                            ty if ty == Self::ITEM_TYPE_NAME => {
+                                Some(serde_json::from_str(payload.get()).map_err(ClientError::from))
+                            }
+                            // Forward Errors from the DB as DBErrors.
+                            "error" => Some(Err(ClientError::DBError(payload.get().to_string()))),
+                            // Ignore heartbeat messages.
+                            "heartbeat" => None,
+                            other => Some(Err(ClientError::InvalidResponseType(format!(
+                                "Expected type {}, but got {}",
+                                Self::ITEM_TYPE_NAME,
+                                other
+                            )))),
+                        },
                         // An error occured while parsing the line, which we forward as an error.
                         Err(e) => Some(Err(e)),
                     }

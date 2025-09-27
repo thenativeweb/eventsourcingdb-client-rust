@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::{RawValue, Value};
 
 use crate::{
@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
 pub struct CustomValue {
-    parsed: Value,
     raw: Box<RawValue>,
+    parsed: Value,
 }
 
 impl PartialEq for CustomValue {
@@ -27,20 +27,26 @@ impl Eq for CustomValue {}
 impl<'de> Deserialize<'de> for CustomValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
-        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        // First get the raw JSON text
+        let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
+
+        // Then parse it into `serde_json::Value`
         let parsed: Value = serde_json::from_str(raw.get()).map_err(serde::de::Error::custom)?;
-        Ok(Self { parsed, raw })
+
+        Ok(Self { raw, parsed })
     }
 }
 
 impl Serialize for CustomValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        self.raw.serialize(serializer)
+        // When serializing, just output the original raw string
+        // so you preserve whitespace and formatting
+        serializer.serialize_str(self.raw.get())
     }
 }
 
@@ -215,7 +221,7 @@ impl From<Event> for cloudevents::Event {
             .ty(event.ty)
             .id(event.id)
             .time(event.time.to_string())
-            .data(event.datacontenttype, event.data);
+            .data(event.datacontenttype, event.data.parsed);
 
         if let Some(traceinfo) = event.traceinfo {
             builder = builder.extension("traceparent", traceinfo.traceparent());

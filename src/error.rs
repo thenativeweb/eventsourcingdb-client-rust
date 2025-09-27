@@ -78,4 +78,7 @@ pub enum EventError {
         /// Actual hash as computed
         actual: String,
     },
+    /// Serde error
+    #[error("Serde error: {0}")]
+    SerdeError(#[from] serde_json::Error),
 }
