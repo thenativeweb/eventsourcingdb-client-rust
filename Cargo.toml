@@ -27,7 +27,7 @@ futures-util = "0.3.31"
 jsonschema = "0.33.0"
 reqwest = { version = "0.12.23", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = { version = "1.0.145", features = ["raw_value"] }
 testcontainers = { version = "0.25.0", features = [
   "http_wait",
 ], optional = true }
@@ -37,6 +37,8 @@ tokio-util = { version = "0.7.16", features = ["io"] }
 tokio-stream = { version = "0.1.17", features = ["io-util"] }
 typed-builder = "0.22.0"
 url = "2.5.4"
+sha2 = "0.10.9"
+hex = "0.4.3"
 
 [dev-dependencies]
 testcontainers = { version = "0.25.0", features = ["http_wait"] }
