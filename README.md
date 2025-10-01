@@ -431,7 +431,7 @@ match result {
 To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an error:
 
 ```rust
-let result = event.verify_hash()
+let result = event.verify_hash();
 match result {
   Ok() => // ...
   Err(err) => // ...
