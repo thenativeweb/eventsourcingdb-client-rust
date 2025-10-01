@@ -398,7 +398,7 @@ match result {
 If you only want to list subjects within a specific branch, provide the desired base subject instead:
 
 ```rust
-let result := client.list_subjects("/books");
+let result = client.list_subjects("/books");
 ```
 
 ### Listing Event Types
@@ -406,7 +406,7 @@ let result := client.list_subjects("/books");
 To list all event types, call the `list_event_types` function. The function returns a stream from which you can retrieve one event type at a time:
 
 ```rust
-let result := client.list_event_types().await;
+let result = client.list_event_types().await;
 match result {
   Ok(event_types) => // ...
   Err(err) => // ...
@@ -419,7 +419,7 @@ To list a specific event type, call the `read_event_type` function. The function
 
 ```rust
 let event_type_name = "io.eventsourcingdb.library.book-acquired";
-let result := client.read_event_type(event_type_name).await;
+let result = client.read_event_type(event_type_name).await;
 match result {
   Ok(event_type) => // ...
   Err(err) => // ...
@@ -431,7 +431,7 @@ match result {
 To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an error:
 
 ```rust
-let result := event.verify_hash()
+let result = event.verify_hash()
 match result {
   Ok() => // ...
   Err(err) => // ...
