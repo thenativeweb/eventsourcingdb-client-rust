@@ -413,7 +413,7 @@ match result {
 }
 ```
 
-### Listing a Specific Event Types
+### Listing a Specific Event Type
 
 To list a specific event type, call the `read_event_type` function. The function returns the detailed event type, which includes the schema:
 
@@ -425,6 +425,20 @@ match result {
   Err(err) => // ...
 }
 ```
+
+### Verifying an Event's Hash
+
+To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an error:
+
+```rust
+let result := event.verify_hash()
+match result {
+  Ok() => // ...
+  Err(err) => // ...
+}
+```
+
+*Note that this only verifies the hash. If you also want to verify the signature, you can skip this step and call `verify_signature` directly, which performs a hash verification internally.*
 
 ### Using Testcontainers
 
