@@ -81,4 +81,10 @@ pub enum EventError {
     /// Serde error
     #[error("Serde error: {0}")]
     SerdeError(#[from] serde_json::Error),
+    /// Signature missing for event
+    #[error("Signature is missing for the event")]
+    MissingSignature,
+    /// Signature is malformed
+    #[error("Signature is malformed")]
+    MalformedSignature,
 }

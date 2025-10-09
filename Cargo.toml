@@ -17,7 +17,7 @@ categories = ["database"]
 [features]
 default = []
 cloudevents = ["dep:cloudevents-sdk"]
-testcontainer = ["dep:testcontainers"]
+testcontainer = ["dep:testcontainers", "dep:rand", "ed25519-dalek/rand_core"]
 
 [dependencies]
 chrono = { version = "0.4.42", features = ["serde"] }
@@ -39,6 +39,8 @@ typed-builder = "0.22.0"
 url = "2.5.4"
 sha2 = "0.10.9"
 hex = "0.4.3"
+ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+rand = { version = "0.8", optional = true }
 
 [dev-dependencies]
 testcontainers = { version = "0.25.0", features = ["http_wait"] }

@@ -34,6 +34,8 @@
 //! ## Stopping the container
 //! The container will be stopped automatically when it is dropped.
 //! You can also stop it manually by calling the [`Container::stop`] method.
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::prelude::ThreadRng;
 use testcontainers::{
     ContainerAsync, GenericImage,
     core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
@@ -63,6 +65,7 @@ pub struct ContainerBuilder {
     image_tag: String,
     internal_port: ContainerPort,
     api_token: String,
+    signing_key: Option<SigningKey>,
 }
 
 impl Default for ContainerBuilder {
@@ -72,6 +75,7 @@ impl Default for ContainerBuilder {
             image_tag: "latest".to_string(),
             internal_port: ContainerPort::Tcp(3000),
             api_token: "secret".to_string(),
+            signing_key: None,
         }
     }
 }
@@ -102,6 +106,16 @@ impl ContainerBuilder {
         self
     }
 
+    /// Enable signing of events with a generated key pair.
+    ///
+    /// This will generate a new key pair for signing events and configure the database to use it.
+    /// The private key will be used to sign events and the public key will be used to verify them.
+    pub fn with_signing_key(mut self) -> Self {
+        let mut rng: ThreadRng = rand::thread_rng();
+        self.signing_key = Some(SigningKey::generate(&mut rng));
+        self
+    }
+
     /// Start the test container.
     ///
     /// This call will transform the builder into a running container.
@@ -112,9 +126,19 @@ impl ContainerBuilder {
     /// # Errors
     /// This function will return an error if the container could not be started.
     pub async fn start(self) -> Result<Container, ContainerError> {
+        let cmd_args = vec![
+            "run",
+            "--api-token",
+            &self.api_token,
+            "--data-directory-temporary",
+            "--http-enabled",
+            "--https-enabled=false",
+        ];
+        // TODO: add support for custom signing key
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
+            verifying_key: self.signing_key.map(|k| k.verifying_key()),
             instance: GenericImage::new(self.image_name, self.image_tag)
                 .with_exposed_port(self.internal_port)
                 .with_wait_for(WaitFor::Http(Box::new(
@@ -123,14 +147,7 @@ impl ContainerBuilder {
                         .with_expected_status_code(200u16),
                 )))
                 .with_startup_timeout(std::time::Duration::from_secs(10))
-                .with_cmd([
-                    "run",
-                    "--api-token",
-                    &self.api_token,
-                    "--data-directory-temporary",
-                    "--http-enabled",
-                    "--https-enabled=false",
-                ])
+                .with_cmd(cmd_args)
                 .start()
                 .await?,
         })
@@ -157,6 +174,7 @@ pub struct Container {
     instance: ContainerAsync<GenericImage>,
     internal_port: ContainerPort,
     api_token: String,
+    verifying_key: Option<VerifyingKey>,
 }
 
 impl Container {
@@ -227,6 +245,12 @@ impl Container {
     #[must_use]
     pub fn get_api_token(&self) -> &str {
         self.api_token.as_str()
+    }
+
+    /// Get the public verifying key of events if signing was enabled.
+    /// If signing was not enabled, this will return `None`.
+    pub fn get_verifying_key(&self) -> Option<&VerifyingKey> {
+        self.verifying_key.as_ref()
     }
 
     /// Stop the container
