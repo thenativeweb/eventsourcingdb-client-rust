@@ -146,7 +146,6 @@ impl ContainerBuilder {
                     .with_expected_status_code(200u16),
             )))
             .with_startup_timeout(std::time::Duration::from_secs(10));
-        // TODO: add support for custom signing key
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
             cmd_args.push("--signing-key-file=/tmp/signing_key.pem");

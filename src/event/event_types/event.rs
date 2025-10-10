@@ -208,7 +208,7 @@ impl Event {
 
     /// Verify the signature of an event.
     ///
-    /// To do this, the hash of the event is verified first before checkging the signature against that hash.
+    /// To do this, the hash of the event is verified first before checking the signature against that hash.
     ///
     /// # Errors
     /// Returns an error if the signature is missing or malformed, or if the signature
