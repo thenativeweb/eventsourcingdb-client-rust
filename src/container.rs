@@ -34,7 +34,10 @@
 //! ## Stopping the container
 //! The container will be stopped automatically when it is dropped.
 //! You can also stop it manually by calling the [`Container::stop`] method.
-use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::EncodePrivateKey};
+use ed25519_dalek::{
+    SigningKey, VerifyingKey,
+    pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
+};
 use rand::prelude::ThreadRng;
 use testcontainers::{
     ContainerAsync, CopyDataSource, GenericImage,
@@ -135,7 +138,7 @@ impl ContainerBuilder {
             "--http-enabled",
             "--https-enabled=false",
         ];
-        let mut testcontainer_image = GenericImage::new(self.image_name, self.image_tag)
+        let mut test_container = GenericImage::new(self.image_name, self.image_tag)
             .with_exposed_port(self.internal_port)
             .with_wait_for(WaitFor::Http(Box::new(
                 HttpWaitStrategy::new("/api/v1/ping")
@@ -146,20 +149,20 @@ impl ContainerBuilder {
         // TODO: add support for custom signing key
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
-            let signing_key_path = "/tmp/signing_key.pem";
-            cmd_args.push("--signing-key-file");
-            cmd_args.push(signing_key_path);
-            testcontainer_image = testcontainer_image.with_copy_to(
-                signing_key_path,
-                CopyDataSource::Data(Vec::from(signing_key.to_pkcs8_der()?.as_bytes())),
+            cmd_args.push("--signing-key-file=/tmp/signing_key.pem");
+            test_container = test_container.with_copy_to(
+                "/tmp/signing_key.pem",
+                CopyDataSource::Data(Vec::from(
+                    signing_key.to_pkcs8_pem(LineEnding::default())?.as_bytes(),
+                )),
             );
         }
-        testcontainer_image = testcontainer_image.with_cmd(cmd_args);
+        let instance = test_container.with_cmd(cmd_args).start().await?;
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
             verifying_key: self.signing_key.map(|k| k.verifying_key()),
-            instance: testcontainer_image.start().await?,
+            instance,
         })
     }
 }

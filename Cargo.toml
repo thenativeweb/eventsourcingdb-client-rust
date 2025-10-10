@@ -39,7 +39,7 @@ typed-builder = "0.22.0"
 url = "2.5.4"
 sha2 = "0.10.9"
 hex = "0.4.3"
-ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8"] }
+ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8", "pem"] }
 rand = { version = "0.8", optional = true }
 
 [dev-dependencies]

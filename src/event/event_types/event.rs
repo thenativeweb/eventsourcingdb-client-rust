@@ -97,6 +97,11 @@ impl Event {
     pub fn predecessorhash(&self) -> &str {
         &self.predecessorhash
     }
+    /// Get the signature of an event.
+    #[must_use]
+    pub fn signature(&self) -> Option<&str> {
+        self.signature.as_deref()
+    }
     /// Get the source of an event.
     #[must_use]
     pub fn source(&self) -> &str {
