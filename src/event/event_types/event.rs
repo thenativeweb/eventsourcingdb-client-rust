@@ -203,6 +203,8 @@ impl Event {
 
     /// Verify the signature of an event.
     ///
+    /// To do this, the hash of the event is verified first before checkging the signature against that hash.
+    ///
     /// # Errors
     /// Returns an error if the signature is missing or malformed, or if the signature
     /// verification fails.
@@ -223,9 +225,7 @@ impl Event {
             .try_into()
             .map_err(|_| EventError::MalformedSignature)?;
         let signature = Signature::from_bytes(&signature_bytes);
-        public_key
-            .verify(self.hash.as_bytes(), &signature)
-            .map_err(|_| EventError::MalformedSignature)
+        Ok(public_key.verify(self.hash.as_bytes(), &signature)?)
     }
 }
 
