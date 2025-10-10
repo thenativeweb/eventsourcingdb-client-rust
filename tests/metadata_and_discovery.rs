@@ -1,5 +1,5 @@
 mod utils;
-use eventsourcingdb::Event;
+use eventsourcingdb::{Event, container::Container};
 use futures::StreamExt;
 use serde_json::json;
 use tokio_test::assert_err;
@@ -193,6 +193,52 @@ async fn verify_broken_event_hash() {
     assert_err!(
         broken_event.verify_hash(),
         "Hash verification should have failed"
+    );
+}
+
+#[tokio::test]
+async fn verify_event_signature() {
+    let container = Container::builder()
+        .with_image_tag("preview")
+        .with_signing_key()
+        .start()
+        .await
+        .expect("Failed to start test container");
+    let verifying_key = container.get_verifying_key().unwrap();
+    let client = container.get_client().await.unwrap();
+    let event_candidate = utils::create_test_eventcandidate("/test", json!({"value": 1}));
+    let written = client
+        .write_events(vec![event_candidate], vec![])
+        .await
+        .expect("Unable to write event");
+    let event = &written[0];
+    event
+        .verify_signature(verifying_key)
+        .expect("Signature verification failed");
+}
+
+#[tokio::test]
+async fn verify_event_signature_with_broken_signature() {
+    let container = Container::builder()
+        .with_image_tag("preview")
+        .with_signing_key()
+        .start()
+        .await
+        .expect("Failed to start test container");
+    let verifying_key = container.get_verifying_key().unwrap();
+    let client = container.get_client().await.unwrap();
+    let event_candidate = utils::create_test_eventcandidate("/test", json!({"value": 1}));
+    let written = client
+        .write_events(vec![event_candidate], vec![])
+        .await
+        .expect("Unable to write event");
+    let event = &written[0];
+    let event_string = serde_json::to_string(event).unwrap();
+    let broken_event_string = event_string.replace(event.signature().unwrap(), "BROKEN");
+    let broken_event: Event = serde_json::from_str(&broken_event_string).unwrap();
+    assert_err!(
+        broken_event.verify_signature(verifying_key),
+        "Signature verification should have failed"
     );
 }
 
