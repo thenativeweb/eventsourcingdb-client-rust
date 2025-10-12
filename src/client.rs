@@ -136,15 +136,9 @@ impl Client {
     ) -> Result<R::Response, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
-        // Extract server header before consuming response
-        let server_header = response.headers().get("Server").cloned();
-
         if response.status().is_success() {
+            Self::validate_server_headers(&response)?;
             let result = response.json().await?;
-
-            // Validate server header after response is consumed
-            validate_server_header_value(server_header.as_ref())?;
-
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
