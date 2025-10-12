@@ -38,22 +38,17 @@ use reqwest;
 use url::Url;
 
 /// Validates that the server header starts with "EventSourcingDB/"
-fn validate_server_header_value(
-    header: Option<&reqwest::header::HeaderValue>,
-) -> Result<(), ClientError> {
-    match header {
-        None => Err(ClientError::InvalidServerHeader),
-        Some(header_value) => {
-            let header_str = header_value.to_str().unwrap_or("");
-            if header_str.starts_with("EventSourcingDB/") {
-                Ok(())
-            } else {
-                Err(ClientError::InvalidServerHeader)
-            }
-        }
+fn validate_server_headers(response: &reqwest::Response) -> Result<(), ClientError> {
+    match response
+        .headers()
+        .get("Server")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.starts_with("EventSourcingDB/"))
+    {
+        Some(true) => Ok(()),
+        _ => Err(ClientError::InvalidServerHeader),
     }
 }
-
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
 pub struct Client {
