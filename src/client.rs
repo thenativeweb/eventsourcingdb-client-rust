@@ -160,10 +160,7 @@ impl Client {
         endpoint: R,
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
-
-        // Validate server header
-        validate_server_header_value(response.headers().get("Server"))?;
-
+        Self::validate_server_headers(&response)?;
         if response.status().is_success() {
             Ok(R::build_stream(response))
         } else {
