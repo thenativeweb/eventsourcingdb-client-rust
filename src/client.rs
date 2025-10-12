@@ -36,8 +36,23 @@ use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
 use url::Url;
-// TODO: Temporarily disabled for debugging
-// use validate_server_header::validate_server_header;
+
+/// Validates that the server header starts with "EventSourcingDB/"
+fn validate_server_header_value(
+    header: Option<&reqwest::header::HeaderValue>,
+) -> Result<(), ClientError> {
+    match header {
+        None => Err(ClientError::InvalidServerHeader),
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("EventSourcingDB/") {
+                Ok(())
+            } else {
+                Err(ClientError::InvalidServerHeader)
+            }
+        }
+    }
+}
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -133,15 +148,7 @@ impl Client {
             let result = response.json().await?;
 
             // Validate server header after response is consumed
-            match server_header {
-                None => return Err(ClientError::InvalidServerHeader),
-                Some(header_value) => {
-                    let header_str = header_value.to_str().unwrap_or("");
-                    if !header_str.starts_with("EventSourcingDB/") {
-                        return Err(ClientError::InvalidServerHeader);
-                    }
-                }
-            }
+            validate_server_header_value(server_header.as_ref())?;
 
             endpoint.validate_response(&result)?;
             Ok(result)
@@ -166,16 +173,7 @@ impl Client {
         let response = self.build_request(&endpoint)?.send().await?;
 
         // Validate server header
-        let server_header = response.headers().get("Server");
-        match server_header {
-            None => return Err(ClientError::InvalidServerHeader),
-            Some(header_value) => {
-                let header_str = header_value.to_str().unwrap_or("");
-                if !header_str.starts_with("EventSourcingDB/") {
-                    return Err(ClientError::InvalidServerHeader);
-                }
-            }
-        }
+        validate_server_header_value(response.headers().get("Server"))?;
 
         if response.status().is_success() {
             Ok(R::build_stream(response))
