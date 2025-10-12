@@ -37,18 +37,6 @@ pub use precondition::Precondition;
 use reqwest;
 use url::Url;
 
-/// Validates that the server header starts with "EventSourcingDB/"
-fn validate_server_headers(response: &reqwest::Response) -> Result<(), ClientError> {
-    match response
-        .headers()
-        .get("Server")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.starts_with("EventSourcingDB/"))
-    {
-        Some(true) => Ok(()),
-        _ => Err(ClientError::InvalidServerHeader),
-    }
-}
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
 pub struct Client {
@@ -58,6 +46,19 @@ pub struct Client {
 }
 
 impl Client {
+    /// Validates that the server header starts with "EventSourcingDB/"
+    fn validate_server_headers(response: &reqwest::Response) -> Result<(), ClientError> {
+        match response
+            .headers()
+            .get("Server")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.starts_with("EventSourcingDB/"))
+        {
+            Some(true) => Ok(()),
+            _ => Err(ClientError::InvalidServerHeader),
+        }
+    }
+
     /// Creates a new client instance based on the base URL and API token
     pub fn new(base_url: Url, api_token: impl Into<String>) -> Self {
         Client {
