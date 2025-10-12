@@ -20,6 +20,7 @@
 mod client_request;
 mod precondition;
 pub mod request_options;
+mod validate_server_header;
 
 use crate::{
     client::client_request::ReadEventTypeRequest,
@@ -36,6 +37,7 @@ use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
 use url::Url;
+use validate_server_header::validate_server_header;
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -124,6 +126,8 @@ impl Client {
     ) -> Result<R::Response, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
+        validate_server_header(&response)?;
+
         if response.status().is_success() {
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
@@ -147,6 +151,8 @@ impl Client {
         endpoint: R,
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
+
+        validate_server_header(&response)?;
 
         if response.status().is_success() {
             Ok(R::build_stream(response))
