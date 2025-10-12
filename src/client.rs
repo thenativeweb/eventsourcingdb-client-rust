@@ -20,7 +20,6 @@
 mod client_request;
 mod precondition;
 pub mod request_options;
-mod validate_server_header;
 
 use crate::{
     client::client_request::ReadEventTypeRequest,
