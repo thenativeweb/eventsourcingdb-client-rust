@@ -37,7 +37,8 @@ use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
 use url::Url;
-use validate_server_header::validate_server_header;
+// TODO: Temporarily disabled for debugging
+// use validate_server_header::validate_server_header;
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
