@@ -126,11 +126,23 @@ impl Client {
     ) -> Result<R::Response, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
-        // TODO: Temporarily disabled for debugging
-        // validate_server_header(&response)?;
+        // Extract server header before consuming response
+        let server_header = response.headers().get("Server").cloned();
 
         if response.status().is_success() {
             let result = response.json().await?;
+
+            // Validate server header after response is consumed
+            match server_header {
+                None => return Err(ClientError::InvalidServerHeader),
+                Some(header_value) => {
+                    let header_str = header_value.to_str().unwrap_or("");
+                    if !header_str.starts_with("EventSourcingDB/") {
+                        return Err(ClientError::InvalidServerHeader);
+                    }
+                }
+            }
+
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
@@ -153,8 +165,17 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
-        // TODO: Temporarily disabled for debugging
-        // validate_server_header(&response)?;
+        // Validate server header
+        let server_header = response.headers().get("Server");
+        match server_header {
+            None => return Err(ClientError::InvalidServerHeader),
+            Some(header_value) => {
+                let header_str = header_value.to_str().unwrap_or("");
+                if !header_str.starts_with("EventSourcingDB/") {
+                    return Err(ClientError::InvalidServerHeader);
+                }
+            }
+        }
 
         if response.status().is_success() {
             Ok(R::build_stream(response))
