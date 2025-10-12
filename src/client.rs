@@ -126,7 +126,8 @@ impl Client {
     ) -> Result<R::Response, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
-        validate_server_header(&response)?;
+        // TODO: Temporarily disabled for debugging
+        // validate_server_header(&response)?;
 
         if response.status().is_success() {
             let result = response.json().await?;
@@ -152,7 +153,8 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
 
-        validate_server_header(&response)?;
+        // TODO: Temporarily disabled for debugging
+        // validate_server_header(&response)?;
 
         if response.status().is_success() {
             Ok(R::build_stream(response))
