@@ -142,7 +142,7 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsOptions {
       recursive: false,
-      ...Default::default(),
+      ..Default::default(),
     }
   ))
   .await;
@@ -183,7 +183,7 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsOptions {
       recursive: false,
-      order: Some(Ordering::Antichronological)
+      order: Some(Ordering::Antichronological),
       ..Default::default(),
     }
   ))
@@ -379,8 +379,8 @@ client.register_event_schema(
       "isbn",
     ],
     "additionalProperties": false,
-  }).await;,
-)
+  }),
+).await;
 ```
 
 ### Listing Subjects
@@ -398,7 +398,7 @@ match result {
 If you only want to list subjects within a specific branch, provide the desired base subject instead:
 
 ```rust
-let result = client.list_subjects("/books");
+let result = client.list_subjects("/books").await;
 ```
 
 ### Listing Event Types
