@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::{RawValue, Value};
 
@@ -65,6 +66,7 @@ pub struct Event {
     traceinfo: Option<TraceInfo>,
     #[serde(rename = "type")]
     ty: String,
+    signature: Option<String>,
 }
 
 impl Event {
@@ -93,6 +95,11 @@ impl Event {
     #[must_use]
     pub fn predecessorhash(&self) -> &str {
         &self.predecessorhash
+    }
+    /// Get the signature of an event.
+    #[must_use]
+    pub fn signature(&self) -> Option<&str> {
+        self.signature.as_deref()
     }
     /// Get the source of an event.
     #[must_use]
@@ -196,6 +203,33 @@ impl Event {
                 actual: final_hash_hex,
             })
         }
+    }
+
+    /// Verify the signature of an event.
+    ///
+    /// To do this, the hash of the event is verified first before checking the signature against that hash.
+    ///
+    /// # Errors
+    /// Returns an error if the signature is missing or malformed, or if the signature
+    /// verification fails.
+    pub fn verify_signature(&self, public_key: &VerifyingKey) -> Result<(), EventError> {
+        const SIGNATURE_PREFIX: &str = "esdb:signature:v1:";
+
+        let Some(signature) = &self.signature else {
+            return Err(EventError::MissingSignature);
+        };
+        self.verify_hash()?;
+
+        let signature = signature
+            .strip_prefix(SIGNATURE_PREFIX)
+            .ok_or(EventError::MalformedSignature)?;
+
+        let signature_bytes: [u8; 64] = hex::decode(signature)
+            .map_err(|_| EventError::MalformedSignature)?
+            .try_into()
+            .map_err(|_| EventError::MalformedSignature)?;
+        let signature = Signature::from_bytes(&signature_bytes);
+        Ok(public_key.verify(self.hash.as_bytes(), &signature)?)
     }
 }
 

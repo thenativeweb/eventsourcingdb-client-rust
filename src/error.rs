@@ -64,6 +64,9 @@ pub enum ContainerError {
     /// This error should never happen. If you experience this error, please let us know as it's likely a bug in the SDK.
     #[error("URL parsing error: {0}")]
     URLParseError(#[from] url::ParseError),
+    /// Error encoding the signing key
+    #[error("Error encoding the signing key: {0}")]
+    SigningKeyEncodingError(#[from] ed25519_dalek::pkcs8::Error),
 }
 
 /// Error type for the event
@@ -84,4 +87,13 @@ pub enum EventError {
     /// Serde error
     #[error("Serde error: {0}")]
     SerdeError(#[from] serde_json::Error),
+    /// Signature missing for event
+    #[error("Signature is missing for the event")]
+    MissingSignature,
+    /// Signature is malformed
+    #[error("Signature is malformed")]
+    MalformedSignature,
+    /// The signature is invalid
+    #[error("A problem with signature verification occurred: {0}")]
+    SignatureError(#[from] ed25519_dalek::SignatureError),
 }
