@@ -47,6 +47,9 @@ pub enum ClientError {
     /// The database returned an invalid response type
     #[error("The DB returned an invalid response type: {0}")]
     InvalidResponseType(String),
+    /// The server header is invalid
+    #[error("Server must be EventSourcingDB")]
+    InvalidServerHeader,
 }
 
 /// Error type for the [`crate::container`] feature.

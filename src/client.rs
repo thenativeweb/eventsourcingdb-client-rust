@@ -46,6 +46,19 @@ pub struct Client {
 }
 
 impl Client {
+    /// Validates that the server header starts with "EventSourcingDB/"
+    fn validate_server_headers(response: &reqwest::Response) -> Result<(), ClientError> {
+        match response
+            .headers()
+            .get("Server")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.starts_with("EventSourcingDB/"))
+        {
+            Some(true) => Ok(()),
+            _ => Err(ClientError::InvalidServerHeader),
+        }
+    }
+
     /// Creates a new client instance based on the base URL and API token
     pub fn new(base_url: Url, api_token: impl Into<String>) -> Self {
         Client {
@@ -125,6 +138,7 @@ impl Client {
         let response = self.build_request(&endpoint)?.send().await?;
 
         if response.status().is_success() {
+            Self::validate_server_headers(&response)?;
             let result = response.json().await?;
             endpoint.validate_response(&result)?;
             Ok(result)
@@ -147,7 +161,7 @@ impl Client {
         endpoint: R,
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response = self.build_request(&endpoint)?.send().await?;
-
+        Self::validate_server_headers(&response)?;
         if response.status().is_success() {
             Ok(R::build_stream(response))
         } else {

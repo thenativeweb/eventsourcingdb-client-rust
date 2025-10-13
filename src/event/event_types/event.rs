@@ -45,9 +45,8 @@ impl Serialize for CustomValue {
     where
         S: Serializer,
     {
-        // When serializing, just output the original raw string
-        // so you preserve whitespace and formatting
-        serializer.serialize_str(self.raw.get())
+        // Serialize the raw value directly as JSON, not as a string
+        self.raw.serialize(serializer)
     }
 }
 
