@@ -440,6 +440,26 @@ match result {
 
 *Note that this only verifies the hash. If you also want to verify the signature, you can skip this step and call `verify_signature` directly, which performs a hash verification internally.*
 
+### Verifying an Event's Signature
+
+To verify the authenticity of an event, call the `verify_signature` function on the event instance. This requires the public key that matches the private key used for signing on the server.
+
+The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error:
+
+```rust
+use ed25519_dalek::VerifyingKey;
+
+// ...
+
+let verification_key = // public key as VerifyingKey
+
+let result = event.verify_signature(&verification_key);
+match result {
+  Ok(()) => // ...
+  Err(err) => // ...
+}
+```
+
 ### Using Testcontainers
 
 Call the `Container::start_default()` function, get a client, and run your test code:
@@ -469,6 +489,24 @@ let container = Container::builder()
   .build()
   .await.unwrap()
 ```
+
+If you want to sign events, call the `with_signing_key` function. This generates a new signing and verification key pair inside the container:
+
+```rust
+let container = Container::builder()
+  .with_signing_key()
+  .build()
+  .await.unwrap()
+```
+
+You can retrieve the private key (for signing) and the public key (for verifying signatures) once the container has been started:
+
+```rust
+let signing_key = container.get_signing_key().await?;
+let verification_key = container.get_verification_key().await?;
+```
+
+The `signing_key` can be used when configuring the container to sign outgoing events. The `verification_key` can be passed to `verify_signature` when verifying events read from the database.
 
 #### Configuring the Client Manually
 
