@@ -10,6 +10,12 @@ pub enum Precondition {
         /// The subject to check
         subject: String,
     },
+    /// Check if the subject with the given path already has events
+    #[serde(rename = "isSubjectPopulated")]
+    IsSubjectPopulated {
+        /// The subject to check
+        subject: String,
+    },
     /// Check if the subject with the given path has no other events
     #[serde(rename = "isSubjectOnEventId")]
     IsSubjectOnEventId {

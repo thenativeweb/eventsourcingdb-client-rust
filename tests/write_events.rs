@@ -79,6 +79,50 @@ async fn write_event_with_is_pristine_condition_on_non_empty_subject() {
 }
 
 #[tokio::test]
+async fn write_event_with_is_subject_populated_condition_on_empty_subject() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+
+    let event_candidate = create_test_eventcandidate("/test/42", json!({"value": 1}));
+    let result = client
+        .write_events(
+            vec![event_candidate.clone()],
+            vec![Precondition::IsSubjectPopulated {
+                subject: event_candidate.subject.clone(),
+            }],
+        )
+        .await;
+    assert!(result.is_err(), "Expected an error, but got: {result:?}");
+}
+
+#[tokio::test]
+async fn write_event_with_is_subject_populated_condition_on_non_empty_subject() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+
+    let first_event = create_test_eventcandidate("/test", json!({"value": 1}));
+    client
+        .write_events(vec![first_event.clone()], vec![])
+        .await
+        .expect("Failed to write initial event");
+
+    let second_event = create_test_eventcandidate("/test", json!({"value": 2}));
+    let result = client
+        .write_events(
+            vec![second_event.clone()],
+            vec![Precondition::IsSubjectPopulated {
+                subject: second_event.subject.clone(),
+            }],
+        )
+        .await;
+    assert!(result.is_ok(), "Writing the event failed: {result:?}");
+    let mut response = result.unwrap();
+    let response_event = response.pop().expect("Expected an event in the response");
+
+    assert_event_match_eventcandidate(&response_event, &second_event, None, None);
+}
+
+#[tokio::test]
 async fn write_events_with_is_pristine_condition_on_empty_subject() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
