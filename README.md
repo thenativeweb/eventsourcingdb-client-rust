@@ -94,6 +94,23 @@ match result {
 }
 ```
 
+#### Using the `IsSubjectPopulated` precondition
+
+If you only want to write events in case a subject (such as `/books/42`) already has at least one event, use the `IsSubjectPopulated` precondition to create a precondition and pass it in a vector as the second argument:
+
+```rust
+let result = client.write_events(
+  vec![event.clone()],
+  vec![Precondition::IsSubjectPopulated {
+    subject: "/books/42".to_string(),
+  }],
+).await;
+match result {
+  Ok(written_events) => // ...
+  Err(err) => // ...
+}
+```
+
 #### Using the `IsSubjectOnEventId` precondition
 
 If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `IsSubjectOnEventId` precondition to create a precondition and pass it in a vector as the second argument:
