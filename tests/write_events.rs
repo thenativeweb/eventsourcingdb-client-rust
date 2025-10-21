@@ -101,10 +101,18 @@ async fn write_event_with_is_subject_populated_condition_on_non_empty_subject() 
     let client = container.get_client().await.unwrap();
 
     let first_event = create_test_eventcandidate("/test", json!({"value": 1}));
-    client
+    let mut initial_response = client
         .write_events(vec![first_event.clone()], vec![])
         .await
         .expect("Failed to write initial event");
+    let initial_event = initial_response
+        .pop()
+        .expect("Expected an event in the response for the initial write");
+    let expected_event_id = initial_event
+        .id()
+        .parse::<usize>()
+        .expect("Expected the event ID to be numeric")
+        + 1;
 
     let second_event = create_test_eventcandidate("/test", json!({"value": 2}));
     let result = client
@@ -119,7 +127,12 @@ async fn write_event_with_is_subject_populated_condition_on_non_empty_subject() 
     let mut response = result.unwrap();
     let response_event = response.pop().expect("Expected an event in the response");
 
-    assert_event_match_eventcandidate(&response_event, &second_event, None, None);
+    assert_event_match_eventcandidate(
+        &response_event,
+        &second_event,
+        None,
+        Some(expected_event_id),
+    );
 }
 
 #[tokio::test]
