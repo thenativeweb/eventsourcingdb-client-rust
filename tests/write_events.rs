@@ -113,6 +113,7 @@ async fn write_event_with_is_subject_populated_condition_on_non_empty_subject() 
         .parse::<usize>()
         .expect("Expected the event ID to be numeric")
         + 1;
+    let predecessor_hash = initial_event.hash().to_string();
 
     let second_event = create_test_eventcandidate("/test", json!({"value": 2}));
     let result = client
@@ -130,7 +131,7 @@ async fn write_event_with_is_subject_populated_condition_on_non_empty_subject() 
     assert_event_match_eventcandidate(
         &response_event,
         &second_event,
-        None,
+        Some(&predecessor_hash),
         Some(expected_event_id),
     );
 }
