@@ -38,7 +38,7 @@ use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
 };
-use rand::prelude::ThreadRng;
+use rand_core::OsRng;
 use testcontainers::{
     ContainerAsync, CopyDataSource, GenericImage,
     core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
@@ -115,8 +115,7 @@ impl ContainerBuilder {
     /// The private key will be used to sign events and the public key will be used to verify them.
     #[must_use]
     pub fn with_signing_key(mut self) -> Self {
-        let mut rng: ThreadRng = rand::thread_rng();
-        self.signing_key = Some(SigningKey::generate(&mut rng));
+        self.signing_key = Some(SigningKey::generate(&mut OsRng));
         self
     }
 
