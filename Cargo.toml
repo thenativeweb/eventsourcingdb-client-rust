@@ -40,7 +40,7 @@ url = "2.5.4"
 sha2 = "0.10.9"
 hex = "0.4.3"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8", "pem"] }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 
 [dev-dependencies]
 testcontainers = { version = "0.25.2", features = ["http_wait"] }
