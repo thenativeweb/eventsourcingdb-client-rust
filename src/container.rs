@@ -211,7 +211,7 @@ impl Container {
 
     /// Shortcut method to start the container with the preview tag and default settings.
     ///
-    /// This is the same as calling [`Container::builder`], [`Container::with_image_tag("preview")`] and then [`ContainerBuilder::start`].
+    /// This is the same as calling [`Container::builder`], [`ContainerBuilder::with_image_tag`] and then [`ContainerBuilder::start`].
     /// In most cases this will create a container with the latest image tag and a working configuration.
     ///
     /// # Errors
