@@ -281,6 +281,49 @@ match result {
 
 *Note that each row returned by the stream is of type `serde_json::Value` and matches the projection specified in your query.*
 
+### Converting Events to Polars DataFrame
+
+For data analysis and exploration, you can convert event streams to Polars DataFrames. To use this feature, add the SDK with the `polars` feature:
+
+```shell
+cargo add eventsourcingdb --features polars
+```
+
+Import the `events_to_dataframe` function and pass an event stream to it:
+
+```rust
+use eventsourcingdb::polars::events_to_dataframe;
+
+let events = client
+  .read_events("/books", Some(ReadEventsOptions {
+    recursive: true,
+    ..Default::default()
+  }))
+  .await?;
+
+let df = events_to_dataframe(events).await?;
+println!("{}", df);
+```
+
+The resulting DataFrame includes all event fields as columns: `event_id`, `time`, `source`, `subject`, `type`, `data`, `spec_version`, `data_content_type`, `predecessor_hash`, `hash`, `trace_parent`, `trace_state`, and `signature`.
+
+The `data` field is stored as a JSON string. Use Polars' JSON functions to extract values:
+
+```rust
+use polars::prelude::*;
+
+// Filter for a specific event type and extract data fields
+let result = df.lazy()
+  .filter(col("type").eq(lit("io.eventsourcingdb.library.book-acquired")))
+  .with_columns([
+    col("data").str().json_path_match("$.title")?.alias("title"),
+    col("data").str().json_path_match("$.author")?.alias("author"),
+  ])
+  .collect()?;
+
+println!("{}", result);
+```
+
 ### Observing Events
 
 To observe all events of a subject, call the `observe_events` function with the subject and an options object. Set the `recursive` option to `false`. This ensures that only events of the given subject are returned, not events of nested subjects.

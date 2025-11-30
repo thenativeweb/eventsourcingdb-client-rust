@@ -17,6 +17,7 @@ categories = ["database"]
 [features]
 default = []
 cloudevents = ["dep:cloudevents-sdk"]
+polars = ["dep:polars"]
 testcontainer = ["dep:testcontainers", "dep:rand", "ed25519-dalek/rand_core"]
 
 [dependencies]
@@ -41,6 +42,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8", "pem"] }
 rand = { version = "0.8", optional = true }
+polars = { version = "0.44", default-features = false, features = ["lazy", "dtype-datetime"], optional = true }
 
 [dev-dependencies]
 testcontainers = { version = "0.25.2", features = ["http_wait"] }
