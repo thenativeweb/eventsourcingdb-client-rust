@@ -70,22 +70,10 @@ async fn returns_dataframe_with_single_event() {
 
     assert_eq!(df.height(), 1);
 
-    let source = df
-        .column("source")
-        .unwrap()
-        .str()
-        .unwrap()
-        .get(0)
-        .unwrap();
+    let source = df.column("source").unwrap().str().unwrap().get(0).unwrap();
     assert_eq!(source, "https://www.eventsourcingdb.io");
 
-    let subject = df
-        .column("subject")
-        .unwrap()
-        .str()
-        .unwrap()
-        .get(0)
-        .unwrap();
+    let subject = df.column("subject").unwrap().str().unwrap().get(0).unwrap();
     assert_eq!(subject, "/test");
 
     let ty = df.column("type").unwrap().str().unwrap().get(0).unwrap();
@@ -221,7 +209,10 @@ async fn time_field_is_datetime() {
 
     let time_col = df.column("time").unwrap();
     assert!(
-        matches!(time_col.dtype(), DataType::Datetime(TimeUnit::Milliseconds, None)),
+        matches!(
+            time_col.dtype(),
+            DataType::Datetime(TimeUnit::Milliseconds, None)
+        ),
         "Time column should be Datetime type, got {:?}",
         time_col.dtype()
     );
@@ -290,23 +281,11 @@ async fn all_event_fields_are_present() {
     assert_eq!(event_id, "0");
 
     // Check source
-    let source = df
-        .column("source")
-        .unwrap()
-        .str()
-        .unwrap()
-        .get(0)
-        .unwrap();
+    let source = df.column("source").unwrap().str().unwrap().get(0).unwrap();
     assert_eq!(source, "https://www.eventsourcingdb.io");
 
     // Check subject
-    let subject = df
-        .column("subject")
-        .unwrap()
-        .str()
-        .unwrap()
-        .get(0)
-        .unwrap();
+    let subject = df.column("subject").unwrap().str().unwrap().get(0).unwrap();
     assert_eq!(subject, "/test");
 
     // Check type

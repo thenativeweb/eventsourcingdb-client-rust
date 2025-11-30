@@ -70,9 +70,8 @@ where
     let mut signatures: Vec<Option<String>> = Vec::new();
 
     while let Some(result) = events.next().await {
-        let event = result.map_err(|e| {
-            PolarsError::ComputeError(format!("Failed to read event: {e}").into())
-        })?;
+        let event = result
+            .map_err(|e| PolarsError::ComputeError(format!("Failed to read event: {e}").into()))?;
 
         event_ids.push(event.id().to_string());
         times.push(event.time().timestamp_millis());
