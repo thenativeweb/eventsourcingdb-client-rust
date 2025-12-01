@@ -408,9 +408,9 @@ dependencies = [
 
 [[package]]
 name = "cloudevents-sdk"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d48721bdd20fbaa008c5180469dc76363776cb68ace437064e916044dd2d92a"
+checksum = "47598c8e3f47e1cfb787750e1bef5de56cb288d757b7b753ace8b5f5b6a1c7f8"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
