@@ -41,7 +41,7 @@ url = "2.5.4"
 sha2 = "0.10.9"
 hex = "0.4.3"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8", "pem"] }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 polars = { version = "0.44", default-features = false, features = ["lazy", "dtype-datetime"], optional = true }
 
 [dev-dependencies]
