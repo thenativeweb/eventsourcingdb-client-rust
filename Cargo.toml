@@ -34,7 +34,7 @@ testcontainers = { version = "0.26.3", features = [
 ], optional = true }
 thiserror = "2.0.17"
 tokio = { version = "1.49.0", features = ["io-util"] }
-tokio-util = { version = "0.7.17", features = ["io"] }
+tokio-util = { version = "0.7.18", features = ["io"] }
 tokio-stream = { version = "0.1.18", features = ["io-util"] }
 typed-builder = "0.23.2"
 url = "2.5.4"
