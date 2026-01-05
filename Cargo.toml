@@ -47,7 +47,7 @@ polars = { version = "0.44", default-features = false, features = ["lazy", "dtyp
 [dev-dependencies]
 testcontainers = { version = "0.26.3", features = ["http_wait"] }
 tokio = { version = "1.49.0", features = ["full"] }
-tokio-test = "0.4.4"
+tokio-test = "0.4.5"
 
 # This is metadata required for working docs on docs.rs
 [package.metadata.docs.rs]
