@@ -28,7 +28,7 @@ futures-util = "0.3.31"
 jsonschema = "0.33.0"
 reqwest = { version = "0.13.1", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.148", features = ["raw_value"] }
+serde_json = { version = "1.0.149", features = ["raw_value"] }
 testcontainers = { version = "0.26.3", features = [
   "http_wait",
 ], optional = true }
