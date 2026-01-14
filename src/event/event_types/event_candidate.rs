@@ -51,7 +51,7 @@ impl TryFrom<cloudevents::Event> for EventCandidate {
 
         Ok(Self {
             data,
-            source: event.source().to_string(),
+            source: event.source().clone(),
             subject,
             ty: event.ty().to_string(),
             traceinfo,
