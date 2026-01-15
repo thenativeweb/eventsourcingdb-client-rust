@@ -2,7 +2,8 @@
 
 mod utils;
 
-use eventsourcingdb::polars::events_to_dataframe;
+use eventsourcingdb::{Event, event::ToDataFrame};
+use futures::StreamExt;
 use polars::prelude::*;
 use serde_json::json;
 use utils::{create_test_container, create_test_eventcandidate};
@@ -17,9 +18,12 @@ async fn returns_empty_dataframe_for_empty_event_stream() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     assert_eq!(df.height(), 0);
     assert_eq!(df.width(), 13);
@@ -64,9 +68,12 @@ async fn returns_dataframe_with_single_event() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     assert_eq!(df.height(), 1);
 
@@ -108,9 +115,12 @@ async fn returns_dataframe_with_multiple_events() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     assert_eq!(df.height(), 4);
 }
@@ -131,9 +141,12 @@ async fn dataframe_has_correct_column_names() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     let expected_columns = [
         "event_id",
@@ -175,9 +188,12 @@ async fn data_field_is_json_string() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     let data = df.column("data").unwrap().str().unwrap().get(0).unwrap();
 
@@ -203,9 +219,12 @@ async fn time_field_is_datetime() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     let time_col = df.column("time").unwrap();
     assert!(
@@ -235,9 +254,12 @@ async fn optional_fields_can_be_null() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     // These fields should be null
     let trace_parent = df.column("trace_parent").unwrap();
@@ -266,9 +288,12 @@ async fn all_event_fields_are_present() {
         .await
         .expect("Failed to read events");
 
-    let df = events_to_dataframe(events_stream)
-        .await
-        .expect("Failed to create dataframe");
+    let events = events_stream
+        .filter_map(async |e| e.ok())
+        .collect::<Vec<Event>>()
+        .await;
+
+    let df = events.as_slice().to_dataframe();
 
     // Check event_id is a string
     let event_id = df
