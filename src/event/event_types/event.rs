@@ -277,7 +277,10 @@ pub trait ToDataFrame {
 }
 
 #[cfg(feature = "polars")]
-impl<'a> ToDataFrame for &'a [Event] {
+impl<T> ToDataFrame for T
+where
+    T: AsRef<[Event]>,
+{
     /// ```
     /// use eventsourcingdb::event::EventCandidate;
     /// use futures::StreamExt;
@@ -291,27 +294,28 @@ impl<'a> ToDataFrame for &'a [Event] {
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
     /// let mut event_stream = client.read_events("/", None).await.expect("Failed to read events");
     /// let events = event_stream.collect::<Vec<_>>().await;
-    /// let dataframe = events.as_slice().to_dataframe();
+    /// let dataframe = events.to_dataframe();
     /// assert!(dataframe.column("event_id").is_ok());
     /// # });
     /// ```
     fn to_dataframe(&self) -> DataFrame {
-        let mut event_ids: Vec<&str> = Vec::with_capacity(self.len());
-        let mut times: Vec<i64> = Vec::with_capacity(self.len());
-        let mut sources: Vec<&str> = Vec::with_capacity(self.len());
-        let mut subjects: Vec<&str> = Vec::with_capacity(self.len());
-        let mut types: Vec<&str> = Vec::with_capacity(self.len());
+        let events = self.as_ref();
+        let mut event_ids: Vec<&str> = Vec::with_capacity(events.len());
+        let mut times: Vec<i64> = Vec::with_capacity(events.len());
+        let mut sources: Vec<&str> = Vec::with_capacity(events.len());
+        let mut subjects: Vec<&str> = Vec::with_capacity(events.len());
+        let mut types: Vec<&str> = Vec::with_capacity(events.len());
         // We take owned data here, since serde_json::Value isn't supported by DataFrame directly.
-        let mut data: Vec<String> = Vec::with_capacity(self.len());
-        let mut spec_versions: Vec<&str> = Vec::with_capacity(self.len());
-        let mut data_content_types: Vec<&str> = Vec::with_capacity(self.len());
-        let mut predecessor_hashes: Vec<&str> = Vec::with_capacity(self.len());
-        let mut hashes: Vec<&str> = Vec::with_capacity(self.len());
-        let mut trace_parents: Vec<Option<&str>> = Vec::with_capacity(self.len());
-        let mut trace_states: Vec<Option<&str>> = Vec::with_capacity(self.len());
-        let mut signatures: Vec<Option<&str>> = Vec::with_capacity(self.len());
+        let mut data: Vec<String> = Vec::with_capacity(events.len());
+        let mut spec_versions: Vec<&str> = Vec::with_capacity(events.len());
+        let mut data_content_types: Vec<&str> = Vec::with_capacity(events.len());
+        let mut predecessor_hashes: Vec<&str> = Vec::with_capacity(events.len());
+        let mut hashes: Vec<&str> = Vec::with_capacity(events.len());
+        let mut trace_parents: Vec<Option<&str>> = Vec::with_capacity(events.len());
+        let mut trace_states: Vec<Option<&str>> = Vec::with_capacity(events.len());
+        let mut signatures: Vec<Option<&str>> = Vec::with_capacity(events.len());
 
-        for event in *self {
+        for event in events {
             event_ids.push(event.id());
             times.push(event.time().timestamp_millis());
             sources.push(event.source());
