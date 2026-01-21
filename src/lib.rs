@@ -52,8 +52,6 @@ pub mod client;
 pub mod container;
 pub mod error;
 pub mod event;
-#[cfg(feature = "polars")]
-pub mod polars;
 
 pub use client::{Client, Precondition, request_options};
 pub use event::{Event, EventCandidate, ManagementEvent, TraceInfo};

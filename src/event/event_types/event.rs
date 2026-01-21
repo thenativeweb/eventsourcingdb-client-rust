@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+#[cfg(feature = "polars")]
+use polars::{frame::DataFrame, prelude::*};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::{RawValue, Value};
 
@@ -264,5 +266,86 @@ impl From<Event> for cloudevents::Event {
         }
 
         builder.build().expect("Failed to build cloudevent")
+    }
+}
+
+#[cfg(feature = "polars")]
+/// Utility trait to convert a slice of Events to a Polars [`DataFrame`].
+pub trait ToDataFrame {
+    /// Convert a slice of Events to a Polars [`DataFrame`].
+    fn to_dataframe(&self) -> DataFrame;
+}
+
+#[cfg(feature = "polars")]
+impl<T> ToDataFrame for T
+where
+    T: AsRef<[Event]>,
+{
+    /// ```
+    /// use eventsourcingdb::event::EventCandidate;
+    /// use futures::StreamExt;
+    /// # use serde_json::json;
+    /// # tokio_test::block_on(async {
+    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// let db_url = "http://localhost:3000/";
+    /// let api_token = "secrettoken";
+    /// # let db_url = container.get_base_url().await.unwrap();
+    /// # let api_token = container.get_api_token();
+    /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
+    /// let mut event_stream = client.read_events("/", None).await.expect("Failed to read events");
+    /// let events = event_stream.collect::<Vec<_>>().await;
+    /// let dataframe = events.to_dataframe();
+    /// assert!(dataframe.column("event_id").is_ok());
+    /// # });
+    /// ```
+    fn to_dataframe(&self) -> DataFrame {
+        let events = self.as_ref();
+        let mut event_ids: Vec<&str> = Vec::with_capacity(events.len());
+        let mut times: Vec<i64> = Vec::with_capacity(events.len());
+        let mut sources: Vec<&str> = Vec::with_capacity(events.len());
+        let mut subjects: Vec<&str> = Vec::with_capacity(events.len());
+        let mut types: Vec<&str> = Vec::with_capacity(events.len());
+        // We take owned data here, since serde_json::Value isn't supported by DataFrame directly.
+        let mut data: Vec<String> = Vec::with_capacity(events.len());
+        let mut spec_versions: Vec<&str> = Vec::with_capacity(events.len());
+        let mut data_content_types: Vec<&str> = Vec::with_capacity(events.len());
+        let mut predecessor_hashes: Vec<&str> = Vec::with_capacity(events.len());
+        let mut hashes: Vec<&str> = Vec::with_capacity(events.len());
+        let mut trace_parents: Vec<Option<&str>> = Vec::with_capacity(events.len());
+        let mut trace_states: Vec<Option<&str>> = Vec::with_capacity(events.len());
+        let mut signatures: Vec<Option<&str>> = Vec::with_capacity(events.len());
+
+        for event in events {
+            event_ids.push(event.id());
+            times.push(event.time().timestamp_millis());
+            sources.push(event.source());
+            subjects.push(event.subject());
+            types.push(event.ty());
+            data.push(event.data().to_string());
+            spec_versions.push(event.specversion());
+            data_content_types.push(event.datacontenttype());
+            predecessor_hashes.push(event.predecessorhash());
+            hashes.push(event.hash());
+            trace_parents.push(event.traceparent());
+            trace_states.push(event.tracestate());
+            signatures.push(event.signature());
+        }
+
+        DataFrame::new(vec![
+            Column::new("event_id".into(), event_ids),
+            Column::new("time".into(), times),
+            Column::new("source".into(), sources),
+            Column::new("subject".into(), subjects),
+            Column::new("type".into(), types),
+            Column::new("data".into(), data),
+            Column::new("spec_version".into(), spec_versions),
+            Column::new("data_content_type".into(), data_content_types),
+            Column::new("predecessor_hash".into(), predecessor_hashes),
+            Column::new("hash".into(), hashes),
+            Column::new("trace_parent".into(), trace_parents),
+            Column::new("trace_state".into(), trace_states),
+            Column::new("signature".into(), signatures),
+        ])
+        .unwrap()
     }
 }
