@@ -174,7 +174,7 @@ impl Event {
     /// # Errors
     /// Returns an error if the hash verification fails.
     pub fn verify_hash(&self) -> Result<(), EventError> {
-        /// This is a helper to convert a `DateTime<Utc>` to a RFC3339 string with trimmed trailing zeros in the fractional seconds part,
+        /// This is a helper to convert a `DateTime<Utc>` to an RFC3339 string with trimmed trailing zeros in the fractional seconds part,
         /// since the hash is calculated based on such a string representation of the time and this matches the Go version.
         fn to_rfc3339_trimmed(dt: DateTime<Utc>) -> String {
             let nanos = format!("{:09}", dt.timestamp_subsec_nanos());
