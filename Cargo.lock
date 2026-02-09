@@ -816,7 +816,7 @@ checksum = "ca81e6b4777c89fd810c25a4be2b1bd93ea034fbe58e6a75216a34c6b82c539b"
 
 [[package]]
 name = "eventsourcingdb"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "cloudevents-sdk",
@@ -3389,7 +3389,7 @@ dependencies = [
  "memchr",
  "parse-display",
  "pin-project-lite",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "serde_with",
