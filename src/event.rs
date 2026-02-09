@@ -12,3 +12,6 @@ pub use trace_info::TraceInfo;
 
 #[cfg(feature = "cloudevents")]
 pub use crate::error::EventError;
+
+#[cfg(feature = "polars")]
+pub use event_types::event::ToDataFrame;
