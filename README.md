@@ -283,25 +283,31 @@ match result {
 
 ### Converting Events to Polars DataFrame
 
-For data analysis and exploration, you can convert event streams to Polars DataFrames. To use this feature, add the SDK with the `polars` feature:
+For data analysis and exploration, you can convert events to Polars DataFrames. To use this feature, add the SDK with the `polars` feature:
 
 ```shell
 cargo add eventsourcingdb --features polars
 ```
 
-Import the `events_to_dataframe` function and pass an event stream to it:
+Import the `ToDataFrame` trait and collect events into a `Vec<Event>`, then call `to_dataframe` on it:
 
 ```rust
-use eventsourcingdb::polars::events_to_dataframe;
+use eventsourcingdb::{Event, event::ToDataFrame};
+use futures::StreamExt;
 
-let events = client
+let event_stream = client
   .read_events("/books", Some(ReadEventsOptions {
     recursive: true,
     ..Default::default()
   }))
   .await?;
 
-let df = events_to_dataframe(events).await?;
+let events = event_stream
+  .filter_map(async |e| e.ok())
+  .collect::<Vec<Event>>()
+  .await;
+
+let df = events.as_slice().to_dataframe();
 println!("{}", df);
 ```
 
