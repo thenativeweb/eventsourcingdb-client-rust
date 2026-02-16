@@ -24,7 +24,7 @@ testcontainer = ["dep:testcontainers", "dep:rand", "ed25519-dalek/rand_core"]
 chrono = { version = "0.4.43", features = ["serde"] }
 cloudevents-sdk = { version = "0.9.0", features = ["reqwest"], optional = true }
 futures = "0.3.31"
-futures-util = "0.3.31"
+futures-util = "0.3.32"
 jsonschema = "0.33.0"
 reqwest = { version = "0.13.2", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
