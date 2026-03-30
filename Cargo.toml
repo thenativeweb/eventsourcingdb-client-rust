@@ -38,7 +38,7 @@ tokio-util = { version = "0.7.18", features = ["io"] }
 tokio-stream = { version = "0.1.18", features = ["io-util"] }
 typed-builder = "0.23.2"
 url = "2.5.4"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 hex = "0.4.3"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core", "pkcs8", "pem"] }
 rand = { version = "0.8", optional = true }
