@@ -115,7 +115,7 @@ impl ContainerBuilder {
     /// The private key will be used to sign events and the public key will be used to verify them.
     #[must_use]
     pub fn with_signing_key(mut self) -> Self {
-        let mut rng: ThreadRng = rand::thread_rng();
+        let mut rng: ThreadRng = rand::rng();
         self.signing_key = Some(SigningKey::generate(&mut rng));
         self
     }
