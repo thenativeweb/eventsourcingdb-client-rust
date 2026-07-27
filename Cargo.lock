@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "eventsourcingdb"
-version = "2.0.3"
+version = "2.0.4"
 dependencies = [
  "chrono",
  "cloudevents-sdk",
@@ -3048,7 +3048,7 @@ dependencies = [
  "bytes",
  "getrandom 0.4.2",
  "lru-slab",
- "rand 0.10.1",
+ "rand 0.10.2",
  "rand_pcg",
  "ring",
  "rustc-hash",
