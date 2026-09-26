@@ -1,12 +1,12 @@
 qa: analyze test
 
 analyze:
-	@cargo clippy
+	@cargo clippy --all-features
 	@cargo fmt --check
 	@cargo doc --all-features --no-deps --document-private-items
 
 test:
-	@cargo test --features testcontainer
+	@cargo test --all-features
 
 format:
 	@cargo fmt

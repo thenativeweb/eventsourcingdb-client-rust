@@ -294,9 +294,8 @@ where
     T: AsRef<[Event]>,
 {
     /// ```
-    /// use eventsourcingdb::event::EventCandidate;
+    /// use eventsourcingdb::event::{Event, ToDataFrame};
     /// use futures::StreamExt;
-    /// # use serde_json::json;
     /// # tokio_test::block_on(async {
     /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
     /// let db_url = "http://localhost:3000/";
@@ -305,8 +304,11 @@ where
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
     /// let mut event_stream = client.read_events("/", None).await.expect("Failed to read events");
-    /// let events = event_stream.collect::<Vec<_>>().await;
-    /// let dataframe = events.to_dataframe();
+    /// let events = event_stream
+    ///     .filter_map(async |e| e.ok())
+    ///     .collect::<Vec<Event>>()
+    ///     .await;
+    /// let dataframe = events.as_slice().to_dataframe();
     /// assert!(dataframe.column("event_id").is_ok());
     /// # });
     /// ```
@@ -343,21 +345,28 @@ where
             signatures.push(event.signature());
         }
 
-        DataFrame::new(vec![
-            Column::new("event_id".into(), event_ids),
-            Column::new("time".into(), times),
-            Column::new("source".into(), sources),
-            Column::new("subject".into(), subjects),
-            Column::new("type".into(), types),
-            Column::new("data".into(), data),
-            Column::new("spec_version".into(), spec_versions),
-            Column::new("data_content_type".into(), data_content_types),
-            Column::new("predecessor_hash".into(), predecessor_hashes),
-            Column::new("hash".into(), hashes),
-            Column::new("trace_parent".into(), trace_parents),
-            Column::new("trace_state".into(), trace_states),
-            Column::new("signature".into(), signatures),
-        ])
+        DataFrame::new(
+            events.len(),
+            vec![
+                Column::new("event_id".into(), event_ids),
+                // The times are milliseconds since the epoch, which become a datetime column, so that they can be
+                // compared and computed with as points in time.
+                Column::new("time".into(), times)
+                    .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
+                    .unwrap(),
+                Column::new("source".into(), sources),
+                Column::new("subject".into(), subjects),
+                Column::new("type".into(), types),
+                Column::new("data".into(), data),
+                Column::new("spec_version".into(), spec_versions),
+                Column::new("data_content_type".into(), data_content_types),
+                Column::new("predecessor_hash".into(), predecessor_hashes),
+                Column::new("hash".into(), hashes),
+                Column::new("trace_parent".into(), trace_parents),
+                Column::new("trace_state".into(), trace_states),
+                Column::new("signature".into(), signatures),
+            ],
+        )
         .unwrap()
     }
 }
