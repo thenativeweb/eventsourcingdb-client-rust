@@ -259,11 +259,22 @@ impl Container {
         self.api_token.as_str()
     }
 
-    /// Get the public verifying key of events if signing was enabled.
+    /// Get the public key for verifying the signatures of events if signing was enabled.
     /// If signing was not enabled, this will return `None`.
     #[must_use]
-    pub fn get_verifying_key(&self) -> Option<&VerifyingKey> {
+    pub fn get_verification_key(&self) -> Option<&VerifyingKey> {
         self.verifying_key.as_ref()
+    }
+
+    /// Get the public key for verifying the signatures of events if signing was enabled.
+    /// If signing was not enabled, this will return `None`.
+    #[deprecated(
+        since = "2.1.0",
+        note = "use `get_verification_key` instead, which is named like in the other SDKs"
+    )]
+    #[must_use]
+    pub fn get_verifying_key(&self) -> Option<&VerifyingKey> {
+        self.get_verification_key()
     }
 
     /// Stop the container
