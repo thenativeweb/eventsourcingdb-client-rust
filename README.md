@@ -542,8 +542,8 @@ By default, `Container` uses the `latest` tag of the official EventSourcingDB Do
 ```rust
 let container = Container::builder()
   .with_image_tag("1.0.0")
-  .build()
-  .await.unwrap()
+  .start()
+  .await.unwrap();
 ```
 
 Similarly, you can configure the port to use and the API token. Call the `with_port` or the `with_api_token` function respectively:
@@ -552,8 +552,8 @@ Similarly, you can configure the port to use and the API token. Call the `with_p
 let container = Container::builder()
   .with_port(4000)
   .with_api_token("secret")
-  .build()
-  .await.unwrap()
+  .start()
+  .await.unwrap();
 ```
 
 If you want to sign events, call the `with_signing_key` function. This generates a new signing and verification key pair inside the container:
@@ -561,18 +561,17 @@ If you want to sign events, call the `with_signing_key` function. This generates
 ```rust
 let container = Container::builder()
   .with_signing_key()
-  .build()
-  .await.unwrap()
+  .start()
+  .await.unwrap();
 ```
 
-You can retrieve the private key (for signing) and the public key (for verifying signatures) once the container has been started:
+You can retrieve the public key (for verifying signatures) once the container has been started. If the container was started without a signing key, there is none:
 
 ```rust
-let signing_key = container.get_signing_key().await?;
-let verification_key = container.get_verification_key().await?;
+let verification_key = container.get_verification_key().unwrap();
 ```
 
-The `signing_key` can be used when configuring the container to sign outgoing events. The `verification_key` can be passed to `verify_signature` when verifying events read from the database.
+The `verification_key` can be passed to `verify_signature` when verifying events read from the database.
 
 #### Configuring the Client Manually
 

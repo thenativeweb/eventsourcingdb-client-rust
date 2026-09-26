@@ -204,7 +204,7 @@ async fn verify_event_signature() {
         .start()
         .await
         .expect("Failed to start test container");
-    let verifying_key = container.get_verifying_key().unwrap();
+    let verification_key = container.get_verification_key().unwrap();
     let client = container.get_client().await.unwrap();
     let event_candidate = utils::create_test_eventcandidate("/test", json!({"value": 1}));
     let written = client
@@ -213,7 +213,7 @@ async fn verify_event_signature() {
         .expect("Unable to write event");
     let event = &written[0];
     event
-        .verify_signature(verifying_key)
+        .verify_signature(verification_key)
         .expect("Signature verification failed");
 }
 
@@ -225,7 +225,7 @@ async fn verify_event_signature_with_broken_signature() {
         .start()
         .await
         .expect("Failed to start test container");
-    let verifying_key = container.get_verifying_key().unwrap();
+    let verification_key = container.get_verification_key().unwrap();
     let client = container.get_client().await.unwrap();
     let event_candidate = utils::create_test_eventcandidate("/test", json!({"value": 1}));
     let written = client
@@ -237,9 +237,25 @@ async fn verify_event_signature_with_broken_signature() {
     let broken_event_string = event_string.replace(event.signature().unwrap(), "BROKEN");
     let broken_event: Event = serde_json::from_str(&broken_event_string).unwrap();
     assert_err!(
-        broken_event.verify_signature(verifying_key),
+        broken_event.verify_signature(verification_key),
         "Signature verification should have failed"
     );
 }
 
 // TODO!: add list event types test after writing to db
+
+#[tokio::test]
+#[allow(deprecated)]
+async fn get_verifying_key_is_the_deprecated_name_of_get_verification_key() {
+    let container = Container::builder()
+        .with_image_tag("preview")
+        .with_signing_key()
+        .start()
+        .await
+        .expect("Failed to start test container");
+    assert_eq!(
+        container.get_verifying_key(),
+        container.get_verification_key()
+    );
+    assert!(container.get_verification_key().is_some());
+}
