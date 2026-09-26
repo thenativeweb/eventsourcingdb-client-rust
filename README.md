@@ -565,13 +565,14 @@ let container = Container::builder()
   .await.unwrap();
 ```
 
-You can retrieve the public key (for verifying signatures) once the container has been started. If the container was started without a signing key, there is none:
+You can retrieve the private key (for signing) and the public key (for verifying signatures) once the container has been started. If the container was started without a signing key, there are none:
 
 ```rust
+let signing_key = container.get_signing_key().unwrap();
 let verification_key = container.get_verification_key().unwrap();
 ```
 
-The `verification_key` can be passed to `verify_signature` when verifying events read from the database.
+The `signing_key` is the private key EventSourcingDB signs events with. The `verification_key` can be passed to `verify_signature` when verifying events read from the database.
 
 #### Configuring the Client Manually
 
