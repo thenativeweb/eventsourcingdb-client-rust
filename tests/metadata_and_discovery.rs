@@ -259,3 +259,28 @@ async fn get_verifying_key_is_the_deprecated_name_of_get_verification_key() {
     );
     assert!(container.get_verification_key().is_some());
 }
+
+#[tokio::test]
+async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
+    let container = Container::builder()
+        .with_image_tag("preview")
+        .with_signing_key()
+        .start()
+        .await
+        .expect("Failed to start test container");
+    let signing_key = container.get_signing_key().unwrap();
+    assert_eq!(
+        Some(&signing_key.verifying_key()),
+        container.get_verification_key()
+    );
+}
+
+#[tokio::test]
+async fn get_signing_key_returns_none_without_a_signing_key() {
+    let container = Container::builder()
+        .with_image_tag("preview")
+        .start()
+        .await
+        .expect("Failed to start test container");
+    assert!(container.get_signing_key().is_none());
+}

@@ -160,7 +160,8 @@ impl ContainerBuilder {
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
-            verifying_key: self.signing_key.map(|k| k.verifying_key()),
+            verifying_key: self.signing_key.as_ref().map(SigningKey::verifying_key),
+            signing_key: self.signing_key,
             instance,
         })
     }
@@ -187,6 +188,7 @@ pub struct Container {
     internal_port: ContainerPort,
     api_token: String,
     verifying_key: Option<VerifyingKey>,
+    signing_key: Option<SigningKey>,
 }
 
 impl Container {
@@ -257,6 +259,13 @@ impl Container {
     #[must_use]
     pub fn get_api_token(&self) -> &str {
         self.api_token.as_str()
+    }
+
+    /// Get the private key the database signs events with if signing was enabled.
+    /// If signing was not enabled, this will return `None`.
+    #[must_use]
+    pub fn get_signing_key(&self) -> Option<&SigningKey> {
+        self.signing_key.as_ref()
     }
 
     /// Get the public key for verifying the signatures of events if signing was enabled.
