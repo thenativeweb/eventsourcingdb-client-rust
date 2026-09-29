@@ -130,6 +130,7 @@ impl ContainerBuilder {
     /// # Errors
     /// This function will return an error if the container could not be started.
     pub async fn start(self) -> Result<Container, ContainerError> {
+        let http_port = self.internal_port.as_u16().to_string();
         let mut cmd_args = vec![
             "run",
             "--api-token",
@@ -137,6 +138,8 @@ impl ContainerBuilder {
             "--data-directory-temporary",
             "--http-enabled",
             "--https-enabled=false",
+            "--http-port",
+            &http_port,
         ];
         let mut test_container = GenericImage::new(self.image_name, self.image_tag)
             .with_exposed_port(self.internal_port)

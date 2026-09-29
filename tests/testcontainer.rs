@@ -35,3 +35,15 @@ async fn generate_client() {
     assert_eq!(client.get_base_url(), generated_client.get_base_url());
     assert_eq!(client.get_api_token(), generated_client.get_api_token());
 }
+
+#[tokio::test]
+async fn starts_with_a_custom_port() {
+    let c = Container::builder()
+        .with_image_tag("preview")
+        .with_port(4000)
+        .start()
+        .await
+        .unwrap();
+    let client = c.get_client().await.unwrap();
+    client.ping().await.unwrap();
+}
