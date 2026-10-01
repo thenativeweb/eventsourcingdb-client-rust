@@ -83,6 +83,7 @@ pub enum ReadEventMissingStrategy {
 #[serde(rename_all = "kebab-case")]
 pub enum ObserveEventMissingStrategy {
     /// Observe all events if the required one is missing
+    #[serde(rename = "read-everything")]
     ObserveEverything,
     /// Wait for the event until observing
     WaitForEvent,
