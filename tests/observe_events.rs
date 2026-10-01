@@ -56,7 +56,7 @@ async fn keep_observing_events() {
 }
 
 #[tokio::test]
-async fn observe_everything_from_missing_latest_event() {
+async fn read_everything_from_missing_latest_event() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let written = client
@@ -78,21 +78,21 @@ async fn observe_everything_from_missing_latest_event() {
                 from_latest_event: Some(ObserveFromLatestEventOptions {
                     subject: "/test",
                     ty: "io.eventsourcingdb.test.does-not-exist",
-                    if_event_is_missing: ObserveEventMissingStrategy::ObserveEverything,
+                    if_event_is_missing: ObserveEventMissingStrategy::ReadEverything,
                 }),
                 ..Default::default()
             }),
         ),
     )
     .await
-    .expect("Timed out requesting ObserveEverything stream")
+    .expect("Timed out requesting ReadEverything stream")
     .expect("Failed to observe events");
 
     for expected in written {
         let event = timeout(Duration::from_secs(10), events_stream.next())
             .await
-            .expect("ObserveEverything did not deliver an existing event")
-            .expect("ObserveEverything stream ended unexpectedly")
+            .expect("ReadEverything did not deliver an existing event")
+            .expect("ReadEverything stream ended unexpectedly")
             .expect("Expected an existing event, but got an error");
 
         assert_eq!(event, expected);
@@ -107,8 +107,8 @@ async fn observe_everything_from_missing_latest_event() {
         .expect("Unable to write new event");
     let event = timeout(Duration::from_secs(10), events_stream.next())
         .await
-        .expect("ObserveEverything did not deliver the new event")
-        .expect("ObserveEverything stream ended unexpectedly")
+        .expect("ReadEverything did not deliver the new event")
+        .expect("ReadEverything stream ended unexpectedly")
         .expect("Expected a new event, but got an error");
 
     assert_eq!(vec![event], written);

@@ -399,7 +399,7 @@ let result = client
 
 To observe starting from the latest event of a given type, provide the `from_latest_event` option and specify the subject, the type, and how to proceed if no such event exists.
 
-Possible options are `WaitForEvent`, which waits for an event of the given type to happen, or `ObserveEverything`, which effectively behaves as if `from_latest_event` was not specified:
+Possible options are `WaitForEvent`, which waits for an event of the given type to happen, or `ReadEverything`, which effectively behaves as if `from_latest_event` was not specified:
 
 ```rust
 let result = client
@@ -410,7 +410,7 @@ let result = client
         ObserveFromLatestEventOptions {
           subject: "/books/42",
           ty: "io.eventsourcingdb.library.book-borrowed",
-          if_event_is_missing: ObserveEventMissingStrategy::ObserveEverything,
+          if_event_is_missing: ObserveEventMissingStrategy::ReadEverything,
         }
       )
       ..Default::default(),
