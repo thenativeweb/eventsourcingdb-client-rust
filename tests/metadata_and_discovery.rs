@@ -245,22 +245,6 @@ async fn verify_event_signature_with_broken_signature() {
 // TODO!: add list event types test after writing to db
 
 #[tokio::test]
-#[allow(deprecated)]
-async fn get_verifying_key_is_the_deprecated_name_of_get_verification_key() {
-    let container = Container::builder()
-        .with_image_tag("preview")
-        .with_signing_key()
-        .start()
-        .await
-        .expect("Failed to start test container");
-    assert_eq!(
-        container.get_verifying_key(),
-        container.get_verification_key()
-    );
-    assert!(container.get_verification_key().is_some());
-}
-
-#[tokio::test]
 async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
     let container = Container::builder()
         .with_image_tag("preview")

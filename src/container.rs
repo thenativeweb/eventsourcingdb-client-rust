@@ -278,17 +278,6 @@ impl Container {
         self.verifying_key.as_ref()
     }
 
-    /// Get the public key for verifying the signatures of events if signing was enabled.
-    /// If signing was not enabled, this will return `None`.
-    #[deprecated(
-        since = "2.1.0",
-        note = "use `get_verification_key` instead, which is named like in the other SDKs"
-    )]
-    #[must_use]
-    pub fn get_verifying_key(&self) -> Option<&VerifyingKey> {
-        self.get_verification_key()
-    }
-
     /// Stop the container
     ///
     /// This will consume the running container and stop it.
