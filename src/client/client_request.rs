@@ -26,13 +26,18 @@ pub use write_events::WriteEventsRequest;
 use crate::error::ClientError;
 use futures::{
     Stream,
-    stream::{StreamExt, TryStreamExt},
+    future::Either,
+    stream::{self, StreamExt, TryStreamExt},
 };
 use futures_util::io;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::time::Duration;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    time::timeout,
+};
 use tokio_stream::wrappers::LinesStream;
 use tokio_util::io::StreamReader;
 
@@ -80,12 +85,21 @@ struct StreamLineItem {
 pub trait StreamingRequest: ClientRequest {
     type ItemType: DeserializeOwned;
     const ITEM_TYPE_NAME: &'static str;
+    /// Whether the database sends heartbeats on this stream
+    const HAS_HEARTBEATS: bool = false;
 
     fn build_stream(
         response: reqwest::Response,
+        heartbeat_timeout: Duration,
     ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
+        let lines = Self::lines_stream(response);
+        let lines = if Self::HAS_HEARTBEATS {
+            Either::Left(end_on_heartbeat_timeout(lines, heartbeat_timeout))
+        } else {
+            Either::Right(lines)
+        };
         Box::pin(
-            Self::lines_stream(response)
+            lines
                 .map(|line| Ok(serde_json::from_str::<StreamLineItem>(line?.as_str())?))
                 .filter_map(|o| async {
                     match o {
@@ -121,4 +135,21 @@ pub trait StreamingRequest: ClientRequest {
         let stream_reader = StreamReader::new(bytes);
         LinesStream::new(BufReader::new(stream_reader).lines()).map_err(ClientError::from)
     }
+}
+
+/// Ends a stream of lines with [`ClientError::HeartbeatTimeout`] if no line arrives within the heartbeat timeout.
+/// Every line, including a heartbeat, restarts the timeout.
+/// When the timeout elapses, the lines are dropped, which closes the underlying response.
+fn end_on_heartbeat_timeout(
+    lines: impl Stream<Item = Result<String, ClientError>>,
+    heartbeat_timeout: Duration,
+) -> impl Stream<Item = Result<String, ClientError>> {
+    stream::unfold(Some(Box::pin(lines)), move |lines| async move {
+        let mut lines = lines?;
+        match timeout(heartbeat_timeout, lines.next()).await {
+            Ok(line) => line.map(|line| (line, Some(lines))),
+            Err(_) => Some((Err(ClientError::HeartbeatTimeout), None)),
+        }
+    })
+    .fuse()
 }

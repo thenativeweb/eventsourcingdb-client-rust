@@ -24,4 +24,5 @@ impl ClientRequest for ObserveEventsRequest<'_> {
 impl StreamingRequest for ObserveEventsRequest<'_> {
     type ItemType = Event;
     const ITEM_TYPE_NAME: &'static str = "event";
+    const HAS_HEARTBEATS: bool = true;
 }
