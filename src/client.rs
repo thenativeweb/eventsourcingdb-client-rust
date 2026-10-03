@@ -20,6 +20,8 @@
 mod client_request;
 mod precondition;
 pub mod request_options;
+#[cfg(test)]
+mod tests;
 
 use crate::{
     client::client_request::ReadEventTypeRequest,
@@ -35,7 +37,11 @@ use client_request::{
 use futures::Stream;
 pub use precondition::Precondition;
 use reqwest;
+use std::time::Duration;
 use url::Url;
+
+/// How long a stream with heartbeats waits for the next line before it ends with [`ClientError::HeartbeatTimeout`]
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 #[derive(Debug)]
@@ -43,6 +49,7 @@ pub struct Client {
     base_url: Url,
     api_token: String,
     reqwest: reqwest::Client,
+    heartbeat_timeout: Duration,
 }
 
 impl Client {
@@ -65,6 +72,7 @@ impl Client {
             base_url,
             api_token: api_token.into(),
             reqwest: reqwest::Client::new(),
+            heartbeat_timeout: HEARTBEAT_TIMEOUT,
         }
     }
 
@@ -163,7 +171,7 @@ impl Client {
         let response = self.build_request(&endpoint)?.send().await?;
         Self::validate_server_headers(&response)?;
         if response.status().is_success() {
-            Ok(R::build_stream(response))
+            Ok(R::build_stream(response, self.heartbeat_timeout))
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
@@ -304,6 +312,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
+    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither an event nor a heartbeat arrives for 30 seconds.
     pub async fn observe_events<'a>(
         &self,
         subject: &'a str,
@@ -521,6 +530,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
+    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither a row nor a heartbeat arrives for 30 seconds.
     pub async fn run_eventql_query(
         &self,
         query: &str,

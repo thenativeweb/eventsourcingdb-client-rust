@@ -50,6 +50,9 @@ pub enum ClientError {
     /// The server header is invalid
     #[error("Server must be EventSourcingDB")]
     InvalidServerHeader,
+    /// Neither an event nor a heartbeat arrived on a stream for 30 seconds
+    #[error("No event and no heartbeat arrived for 30 seconds")]
+    HeartbeatTimeout,
 }
 
 /// Error type for the [`crate::container`] feature.

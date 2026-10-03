@@ -281,6 +281,8 @@ match result {
 
 *Note that each row returned by the stream is of type `serde_json::Value` and matches the projection specified in your query.*
 
+*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
+
 ### Converting Events to Polars DataFrame
 
 For data analysis and exploration, you can convert events to Polars DataFrames. To use this feature, add the SDK with the `polars` feature:
@@ -356,6 +358,8 @@ match result {
   }
 }
 ```
+
+*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
 
 #### Observing From Subjects Recursively
 
