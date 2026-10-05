@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "eventsourcingdb"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "chrono",
  "cloudevents-sdk",
