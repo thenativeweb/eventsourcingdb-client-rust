@@ -132,6 +132,38 @@ fn create_client(server: &TestServer) -> Client {
 }
 
 #[tokio::test]
+async fn list_subjects_decodes_subject_objects() {
+    let server = TestServer::start(vec![
+        (
+            Duration::ZERO,
+            json!({ "type": "subject", "payload": { "subject": "/test" } }).to_string(),
+        ),
+        (
+            Duration::ZERO,
+            json!({ "type": "error", "payload": {} }).to_string(),
+        ),
+    ])
+    .await;
+    let client = create_client(&server);
+    let mut subjects = client
+        .list_subjects(None)
+        .await
+        .expect("Failed to list subjects");
+
+    let subject = timeout(GUARD_TIMEOUT, subjects.next())
+        .await
+        .expect("The subject did not arrive")
+        .expect("The stream ended unexpectedly")
+        .expect("Failed to decode subject object");
+    assert_eq!(subject, "/test");
+
+    let result = timeout(GUARD_TIMEOUT, subjects.next())
+        .await
+        .expect("The database error did not arrive");
+    assert!(matches!(result, Some(Err(ClientError::DBError(payload))) if payload == "{}"));
+}
+
+#[tokio::test]
 async fn observe_events_ends_with_heartbeat_timeout() {
     let server = TestServer::start(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
     let client = create_client(&server);
