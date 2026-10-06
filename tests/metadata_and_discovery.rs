@@ -88,7 +88,33 @@ async fn list_all_subjects_after_writing_events() {
     assert_eq!(subjects, ["/", "/test"]);
 }
 
-//TODO!: add list scoped subjects test after writing to db
+#[tokio::test]
+async fn list_scoped_subjects_after_writing_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    client
+        .write_events(
+            vec![
+                utils::create_test_eventcandidate("/test", json!({"value": 1})),
+                utils::create_test_eventcandidate("/test/42", json!({"value": 2})),
+                utils::create_test_eventcandidate("/other", json!({"value": 3})),
+            ],
+            vec![],
+        )
+        .await
+        .expect("Failed to write events");
+
+    let mut subjects: Vec<_> = client
+        .list_subjects(Some("/test"))
+        .await
+        .expect("Failed to list subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    subjects.sort();
+
+    assert_eq!(subjects, ["/test", "/test/42"]);
+}
 
 #[tokio::test]
 async fn list_all_event_types() {
