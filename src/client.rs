@@ -390,9 +390,7 @@ impl Client {
     ///
     /// To get all subjects in the DB, just pass `None` as the `base_subject`.
     /// ```
-    /// use eventsourcingdb::event::EventCandidate;
     /// use futures::StreamExt;
-    /// # use serde_json::json;
     /// # tokio_test::block_on(async {
     /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
     /// let db_url = "http://localhost:3000/";
@@ -400,18 +398,16 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
-    /// let mut subject_stream = client.list_subjects(None).await.expect("Failed to list event types");
+    /// let mut subject_stream = client.list_subjects(None).await.expect("Failed to list subjects");
     /// while let Some(subject) = subject_stream.next().await {
-    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    ///     println!("Found subject {}", subject.expect("Error while reading subjects"));
     /// }
     /// # })
     /// ```
     ///
     /// To get all subjects under /test in the DB, just pass `Some("/test")` as the `base_subject`.
     /// ```
-    /// use eventsourcingdb::event::EventCandidate;
     /// use futures::StreamExt;
-    /// # use serde_json::json;
     /// # tokio_test::block_on(async {
     /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
     /// let db_url = "http://localhost:3000/";
@@ -419,9 +415,9 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
-    /// let mut subject_stream = client.list_subjects(Some("/test")).await.expect("Failed to list event types");
+    /// let mut subject_stream = client.list_subjects(Some("/test")).await.expect("Failed to list subjects");
     /// while let Some(subject) = subject_stream.next().await {
-    ///     println!("Found Type {}", subject.expect("Error while reading types"));
+    ///     println!("Found subject {}", subject.expect("Error while reading subjects"));
     /// }
     /// # })
     /// ```
