@@ -1,6 +1,6 @@
 mod utils;
 use eventsourcingdb::{Event, container::Container};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use tokio_test::assert_err;
 use utils::create_test_container;
@@ -61,7 +61,32 @@ async fn list_all_subjects() {
     }
 }
 
-//TODO!: add list all subjects test after writing to db
+#[tokio::test]
+async fn list_all_subjects_after_writing_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    client
+        .write_events(
+            vec![utils::create_test_eventcandidate(
+                "/test",
+                json!({"value": 1}),
+            )],
+            vec![],
+        )
+        .await
+        .expect("Failed to write events");
+
+    let mut subjects: Vec<_> = client
+        .list_subjects(None)
+        .await
+        .expect("Failed to list subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    subjects.sort();
+
+    assert_eq!(subjects, ["/", "/test"]);
+}
 
 //TODO!: add list scoped subjects test after writing to db
 

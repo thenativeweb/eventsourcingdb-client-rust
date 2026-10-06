@@ -34,7 +34,7 @@ use client_request::{
     OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest,
     RunEventqlQueryRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
 };
-use futures::Stream;
+use futures::{Stream, TryStreamExt};
 pub use precondition::Precondition;
 use reqwest;
 use std::time::Duration;
@@ -437,7 +437,7 @@ impl Client {
                 base_subject: base_subject.unwrap_or("/"),
             })
             .await?;
-        Ok(response)
+        Ok(response.map_ok(|payload| payload.subject))
     }
 
     /// List all event types in the DB instance.
