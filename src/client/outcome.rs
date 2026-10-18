@@ -5,7 +5,7 @@
 //! storing anything. Every other failure leaves the outcome unknown, so it is wrapped in
 //! [`ClientError::OutcomeUnknown`].
 
-use super::http::{HandOver, was_refused_unprocessed};
+use super::http::HandOver;
 use crate::error::{ClientError, DbApiError};
 
 /// Wraps the error of a write that failed in [`ClientError::OutcomeUnknown`], unless the write was certainly not
@@ -20,15 +20,13 @@ pub fn of_write<T>(
 ) -> Result<T, ClientError> {
     result.map_err(|error| {
         // Until the body was handed to a connection, nothing of the write can have reached the server, so a stall or
-        // a failure while establishing the connection leaves it certainly not stored.
+        // a failure while establishing the connection leaves it certainly not stored, and so does an HTTP/2 stream
+        // that the server refused before answering, which Http::send_write reports as not handed on.
         if !hand_over.has_happened() {
             return error;
         }
         let is_certainly_not_stored = match &error {
-            // A stream that the server refused without processing it was not stored either.
-            ClientError::ReqwestError(error) => {
-                error.is_connect() || was_refused_unprocessed(error)
-            }
+            ClientError::ReqwestError(error) => error.is_connect(),
             // Only EventSourcingDB itself can refuse a write.
             ClientError::DbApiError(error) => error.is_from_eventsourcingdb && is_refusal(error),
             _ => false,

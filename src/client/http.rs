@@ -38,9 +38,10 @@ pub struct Write {
 }
 
 /// Tells whether the server refused the HTTP/2 stream of the request without processing it, in exactly the cases in
-/// which reqwest sends a request once more: the server reset the stream with `REFUSED_STREAM`, or it shut the
+/// which reqwest sends a request once more, which only holds while sending the request, before the head of an
+/// answer arrived: the server reset the stream with `REFUSED_STREAM`, or it shut the
 /// connection down gracefully, with `GOAWAY` and `NO_ERROR`, before it processed the stream.
-pub fn was_refused_unprocessed(error: &reqwest::Error) -> bool {
+fn was_refused_unprocessed(error: &reqwest::Error) -> bool {
     let mut source = std::error::Error::source(error);
     while let Some(error) = source {
         if let Some(error) = error.downcast_ref::<h2::Error>() {
@@ -198,10 +199,12 @@ impl Http {
             };
 
             match result {
-                // The server did not process the refused stream, so the write is sent once more.
-                Err(ClientError::ReqwestError(error))
-                    if resends < MAX_RESENDS && was_refused_unprocessed(&error) =>
-                {
+                // The server refused the stream before the head of an answer arrived, so it did not process it.
+                Err(ClientError::ReqwestError(error)) if was_refused_unprocessed(&error) => {
+                    if resends == MAX_RESENDS {
+                        // Nothing of the write reached the server, as if its body was never handed on.
+                        return (Err(error.into()), HandOver::default());
+                    }
                     resends += 1;
                 }
                 result => return (result, hand_over),

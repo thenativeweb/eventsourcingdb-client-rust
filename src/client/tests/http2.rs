@@ -10,7 +10,11 @@ use std::{
 
 use bytes::Bytes;
 use serde_json::json;
-use tokio::{net::TcpListener, sync::OnceCell, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::OnceCell,
+    time::{sleep, timeout},
+};
 
 use super::{Api, Client, GUARD_TIMEOUT, STALL_TIMEOUT, event_data, test_candidate};
 use crate::{
@@ -25,8 +29,26 @@ struct Http2Server {
     streams: Arc<AtomicUsize>,
 }
 
+/// When the server refuses a stream
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    /// Before it sends the head of the response, which tells that it did not process the stream
+    BeforeHead,
+    /// After it sent the head of the response, which tells nothing about whether it processed the stream
+    AfterHead,
+}
+
 impl Http2Server {
     async fn start(api: Api, refusals: usize, reason: h2::Reason) -> Self {
+        Self::start_refusing(api, refusals, reason, Refusal::BeforeHead).await
+    }
+
+    async fn start_refusing(
+        api: Api,
+        refusals: usize,
+        reason: h2::Reason,
+        refusal: Refusal,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("Failed to start test server");
@@ -53,7 +75,8 @@ impl Http2Server {
                         return;
                     };
                     while let Some(Ok((_, mut respond))) = connection.accept().await {
-                        if streams.fetch_add(1, Ordering::SeqCst) < refusals {
+                        let is_refused = streams.fetch_add(1, Ordering::SeqCst) < refusals;
+                        if is_refused && refusal == Refusal::BeforeHead {
                             respond.send_reset(reason);
                             continue;
                         }
@@ -63,7 +86,16 @@ impl Http2Server {
                             .body(())
                             .expect("Failed to build the response");
                         if let Ok(mut stream) = respond.send_response(response, false) {
-                            let _ = stream.send_data(Bytes::from(body.clone()), true);
+                            if is_refused {
+                                // The connection sends the head only while it is driven, so the reset follows
+                                // in a task of its own, once the head has long arrived.
+                                drop(tokio::spawn(async move {
+                                    sleep(Duration::from_millis(200)).await;
+                                    stream.send_reset(reason);
+                                }));
+                            } else {
+                                let _ = stream.send_data(Bytes::from(body.clone()), true);
+                            }
                         }
                     }
                 }));
@@ -80,6 +112,15 @@ impl Http2Server {
 
     /// Creates a client that speaks HTTP/2 with the server, and knows the version of the API already.
     fn client(&self, api_version: ApiVersion) -> Client {
+        self.client_with_stall_timeout(api_version, STALL_TIMEOUT)
+    }
+
+    /// Creates a client as [`Http2Server::client`] does, with the given stall timeout.
+    fn client_with_stall_timeout(
+        &self,
+        api_version: ApiVersion,
+        stall_timeout: Duration,
+    ) -> Client {
         let reqwest = reqwest::Client::builder()
             .http2_prior_knowledge()
             .build()
@@ -88,7 +129,7 @@ impl Http2Server {
             http: Http::with_reqwest(
                 self.base_url.clone(),
                 "secret".to_string(),
-                STALL_TIMEOUT,
+                stall_timeout,
                 reqwest,
             ),
             api_version: OnceCell::new_with(Some(api_version)),
@@ -185,5 +226,39 @@ async fn a_write_over_http2_succeeds() {
         .expect("The write did not end")
         .expect("Failed to write events");
         assert_eq!(server.streams(), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_write_whose_stream_the_server_refuses_after_the_head_of_its_answer_has_an_unknown_outcome()
+ {
+    for (api, api_version) in APIS {
+        let server = Http2Server::start_refusing(
+            api,
+            usize::MAX,
+            h2::Reason::REFUSED_STREAM,
+            Refusal::AfterHead,
+        )
+        .await;
+        // The stall timeout is longer than the server waits after the head of its answer.
+        let client = server.client_with_stall_timeout(api_version, GUARD_TIMEOUT);
+
+        let error = timeout(
+            GUARD_TIMEOUT,
+            client.write_events(vec![test_candidate()], vec![]),
+        )
+        .await
+        .expect("The write did not end")
+        .expect_err("Expected the write to fail");
+        assert!(
+            matches!(error, ClientError::OutcomeUnknown(_)),
+            "Expected an unknown outcome through {api:?}, but got {error:?}"
+        );
+        // The refusal came after the head of the answer, so the write is not sent once more.
+        assert_eq!(
+            server.streams(),
+            1,
+            "Expected a single stream through {api:?}"
+        );
     }
 }
