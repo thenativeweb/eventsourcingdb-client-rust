@@ -4,7 +4,7 @@ pub mod code;
 #[cfg(test)]
 mod tests;
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use reqwest::{self, StatusCode};
 use serde_json::{Map, Value};
@@ -101,7 +101,7 @@ impl From<std::io::Error> for ClientError {
 ///     }
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Clone, Error)]
 #[error("{}", describe_db_api_error(self))]
 #[non_exhaustive]
 pub struct DbApiError {
@@ -123,6 +123,29 @@ pub struct DbApiError {
     /// Whether the answer is from EventSourcingDB, which names itself in the `Server` header. An error answer of a
     /// proxy in front of it, for example, is not, so it tells nothing about whether a write was stored.
     pub(crate) is_from_eventsourcingdb: bool,
+}
+
+// Debug and PartialEq leave out whether the error is from EventSourcingDB, which only the SDK itself uses.
+impl fmt::Debug for DbApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DbApiError")
+            .field("code", &self.code)
+            .field("description", &self.description)
+            .field("details", &self.details)
+            .field("status", &self.status)
+            .field("retry_after", &self.retry_after)
+            .finish()
+    }
+}
+
+impl PartialEq for DbApiError {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.description == other.description
+            && self.details == other.details
+            && self.status == other.status
+            && self.retry_after == other.retry_after
+    }
 }
 
 impl DbApiError {
