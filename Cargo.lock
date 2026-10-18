@@ -987,6 +987,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "futures-util",
+ "h2",
  "hex",
  "http",
  "http-body",

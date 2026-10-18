@@ -173,7 +173,14 @@ async fn send_request(
     http: &Http,
     request: reqwest::Request,
 ) -> Result<reqwest::Response, ClientError> {
-    let response = http.send(request).await?;
+    check_response(http, http.send(request).await?).await
+}
+
+/// Checks the response as [`send`] does, and returns it if it reports success.
+async fn check_response(
+    http: &Http,
+    response: reqwest::Response,
+) -> Result<reqwest::Response, ClientError> {
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
 
     if response.status() == StatusCode::OK {
@@ -278,11 +285,11 @@ pub async fn write_events(
         events,
         preconditions,
     };
-    let (request, hand_over) =
-        http.write_request(Method::POST, "/api/v2/data/write-events", &body)?;
+    let write = http.write(Method::POST, "/api/v2/data/write-events", &body)?;
+    let (sent, hand_over) = http.send_write(&write).await;
 
     let writing = async {
-        let response = send_request(http, request).await?;
+        let response = check_response(http, sent?).await?;
         request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await
@@ -316,11 +323,11 @@ pub async fn register_event_schema(
         ty: event_type,
         schema,
     };
-    let (request, hand_over) =
-        http.write_request(Method::POST, "/api/v2/data/register-event-schema", &body)?;
+    let write = http.write(Method::POST, "/api/v2/data/register-event-schema", &body)?;
+    let (sent, hand_over) = http.send_write(&write).await;
 
     let registering = async {
-        let response = send_request(http, request).await?;
+        let response = check_response(http, sent?).await?;
         let mut events: Vec<ManagementEvent> = request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await?;

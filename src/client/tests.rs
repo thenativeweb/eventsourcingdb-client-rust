@@ -1,6 +1,7 @@
 //! The tests of the client against a local server that stands in for EventSourcingDB, with the v1 and the v2 API.
 
 mod errors;
+mod http2;
 mod outcome;
 mod probe;
 mod requests;

@@ -273,7 +273,15 @@ async fn send_request<R: ClientRequest>(
     endpoint: &R,
     request: reqwest::Request,
 ) -> Result<reqwest::Response, ClientError> {
-    let response = http.send(request).await?;
+    check_response(http, endpoint, http.send(request).await?).await
+}
+
+/// Checks the response to a request for the endpoint as [`send`] does, and returns it if it reports success.
+async fn check_response<R: ClientRequest>(
+    http: &Http,
+    endpoint: &R,
+    response: reqwest::Response,
+) -> Result<reqwest::Response, ClientError> {
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
 
     if response.status().is_success() {
@@ -314,7 +322,17 @@ async fn read_oneshot<R: OneShotRequest>(
     endpoint: &R,
     request: reqwest::Request,
 ) -> Result<R::Response, ClientError> {
-    let response = send_request(http, endpoint, request).await?;
+    let response = http.send(request).await?;
+    read_oneshot_response(http, endpoint, response).await
+}
+
+/// Checks the response to a request for the endpoint, and returns the single response it carries.
+async fn read_oneshot_response<R: OneShotRequest>(
+    http: &Http,
+    endpoint: &R,
+    response: reqwest::Response,
+) -> Result<R::Response, ClientError> {
+    let response = check_response(http, endpoint, response).await?;
     let result = http.read_json(response).await?;
     endpoint.validate_response(&result)?;
     Ok(result)
@@ -327,12 +345,11 @@ async fn request_write<R: OneShotRequest>(
     endpoint: R,
 ) -> Result<R::Response, ClientError> {
     let body = endpoint.body().transpose()?;
-    let (request, hand_over) = http.write_request(endpoint.method(), endpoint.url_path(), &body)?;
-    outcome::of_write(
-        read_oneshot(http, &endpoint, request).await,
-        &hand_over,
-        is_refusal,
-    )
+    let write = http.write(endpoint.method(), endpoint.url_path(), &body)?;
+    let (sent, hand_over) = http.send_write(&write).await;
+
+    let writing = async { read_oneshot_response(http, &endpoint, sent?).await };
+    outcome::of_write(writing.await, &hand_over, is_refusal)
 }
 
 /// Tells whether the server refused a write through the v1 API before storing anything, which it does with every

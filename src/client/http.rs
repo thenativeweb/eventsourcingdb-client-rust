@@ -25,6 +25,34 @@ use url::Url;
 use super::stall_timeout;
 use crate::error::{ClientError, DbApiError};
 
+/// How often a write is sent once more at most after the server refused its HTTP/2 stream, as often as reqwest sends
+/// every other request once more
+const MAX_RESENDS: usize = 2;
+
+/// A write, built but not sent yet, which keeps its body, so that it can be sent once more
+#[derive(Debug)]
+pub struct Write {
+    method: Method,
+    url: Url,
+    body: Bytes,
+}
+
+/// Tells whether the server refused the HTTP/2 stream of the request without processing it, in exactly the cases in
+/// which reqwest sends a request once more: the server reset the stream with `REFUSED_STREAM`, or it shut the
+/// connection down gracefully, with `GOAWAY` and `NO_ERROR`, before it processed the stream.
+pub fn was_refused_unprocessed(error: &reqwest::Error) -> bool {
+    let mut source = std::error::Error::source(error);
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<h2::Error>() {
+            return error.is_remote()
+                && ((error.is_go_away() && error.reason() == Some(h2::Reason::NO_ERROR))
+                    || (error.is_reset() && error.reason() == Some(h2::Reason::REFUSED_STREAM)));
+        }
+        source = error.source();
+    }
+    false
+}
+
 /// Records whether the body of a write was handed to a connection, which asks for it only once the connection is
 /// established. Until then, nothing of the write can have reached the server.
 #[derive(Debug, Clone, Default)]
@@ -83,11 +111,21 @@ pub struct Http {
 
 impl Http {
     pub fn new(base_url: Url, api_token: String, stall_timeout: Duration) -> Self {
+        Self::with_reqwest(base_url, api_token, stall_timeout, reqwest::Client::new())
+    }
+
+    /// Creates the connection with the given client of reqwest, which lets the tests speak HTTP/2 without TLS.
+    pub fn with_reqwest(
+        base_url: Url,
+        api_token: String,
+        stall_timeout: Duration,
+        reqwest: reqwest::Client,
+    ) -> Self {
         Self {
             base_url,
             api_token,
             stall_timeout,
-            reqwest: reqwest::Client::new(),
+            reqwest,
         }
     }
 
@@ -113,32 +151,62 @@ impl Http {
         Ok(request.build()?)
     }
 
-    /// Builds a write to the given path, with the given body as JSON, and returns it together with the record of
-    /// whether its body was handed to a connection.
+    /// Builds a write to the given path, with the given body as JSON, which [`Http::send_write`] sends.
     ///
     /// Building the write does not send it, so an error of this function means that nothing was sent.
     ///
     /// # Errors
     /// Returns an error if the URL is invalid, or if the body can not be serialized.
-    pub fn write_request<T: Serialize + ?Sized>(
+    pub fn write<T: Serialize + ?Sized>(
         &self,
         method: Method,
         path: &str,
         body: &T,
-    ) -> Result<(reqwest::Request, HandOver), ClientError> {
-        let body = Bytes::from(serde_json::to_vec(body)?);
-        let hand_over = HandOver::default();
-        let request = self
-            .request_builder(method, path)?
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::CONTENT_LENGTH, body.len())
-            .body(reqwest::Body::wrap(RecordingBody {
-                length: body.len() as u64,
-                body: Some(body),
-                hand_over: hand_over.clone(),
-            }))
-            .build()?;
-        Ok((request, hand_over))
+    ) -> Result<Write, ClientError> {
+        Ok(Write {
+            method,
+            url: self.base_url.join(path)?,
+            body: Bytes::from(serde_json::to_vec(body)?),
+        })
+    }
+
+    /// Sends the write, and returns the response once its head arrived, together with the record of whether the body
+    /// of the write was handed to a connection.
+    ///
+    /// The body of a write records when it is handed on, so reqwest can not send it once more on its own, as it does
+    /// with every other request if the server refused its HTTP/2 stream without processing it. So this function does
+    /// that itself, with a fresh body, in exactly the same cases and as often.
+    pub async fn send_write(&self, write: &Write) -> (Result<Response, ClientError>, HandOver) {
+        let mut resends = 0;
+        loop {
+            let hand_over = HandOver::default();
+            let request = self
+                .reqwest
+                .request(write.method.clone(), write.url.clone())
+                .bearer_auth(&self.api_token)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CONTENT_LENGTH, write.body.len())
+                .body(reqwest::Body::wrap(RecordingBody {
+                    length: write.body.len() as u64,
+                    body: Some(write.body.clone()),
+                    hand_over: hand_over.clone(),
+                }))
+                .build();
+            let result = match request {
+                Ok(request) => self.send(request).await,
+                Err(error) => Err(error.into()),
+            };
+
+            match result {
+                // The server did not process the refused stream, so the write is sent once more.
+                Err(ClientError::ReqwestError(error))
+                    if resends < MAX_RESENDS && was_refused_unprocessed(&error) =>
+                {
+                    resends += 1;
+                }
+                result => return (result, hand_over),
+            }
+        }
     }
 
     /// Starts a request to the given path, with the API token.
