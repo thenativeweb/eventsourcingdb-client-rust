@@ -40,11 +40,19 @@ async fn the_first_request_finds_out_the_api_version_which_the_client_remembers(
         body: "not found".to_string(),
         is_from_eventsourcingdb: false,
     };
+    // In practice, the 404 of a proxy is HTML.
+    let html_proxy_answer = Reply::Text {
+        status: 404,
+        headers: vec![("Server", "nginx"), ("Content-Type", "text/html")],
+        body: "<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr><center>nginx</center></body></html>\n".to_string(),
+        is_from_eventsourcingdb: false,
+    };
     let cases = [
         (Reply::text(404, "404 page not found\n"), Api::V1),
         (Reply::text(405, "Method Not Allowed\n"), Api::V1),
         (proxy_answer(404), Api::V1),
         (proxy_answer(405), Api::V1),
+        (html_proxy_answer, Api::V1),
         (probe_reply(Api::V2), Api::V2),
     ];
     for (probe, api) in cases {

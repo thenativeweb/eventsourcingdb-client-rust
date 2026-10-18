@@ -31,8 +31,8 @@ pub enum Reply {
     Open(Vec<(Duration, String)>),
     /// Sends the same as [`Reply::Open`], and then ends the body
     Complete(Vec<(Duration, String)>),
-    /// Sends the given status, headers, and body as plain text, and the `Server` header the client requires if
-    /// `is_from_eventsourcingdb` is set
+    /// Sends the given status, headers, and body, as plain text unless the headers name another content type, and the
+    /// `Server` header the client requires if `is_from_eventsourcingdb` is set
     Text {
         status: u16,
         headers: Vec<(&'static str, &'static str)>,
@@ -220,8 +220,14 @@ async fn send_reply(socket: &mut TcpStream, reply: Reply) -> AfterReply {
             body,
             is_from_eventsourcingdb,
         } => {
-            let mut head =
-                format!("HTTP/1.1 {status} Status\r\nContent-Type: text/plain; charset=utf-8\r\n");
+            let mut head = format!("HTTP/1.1 {status} Status\r\n");
+            // The headers may name another content type than plain text.
+            if !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("Content-Type"))
+            {
+                head.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+            }
             if is_from_eventsourcingdb {
                 head.push_str("Server: EventSourcingDB/test\r\n");
             }
