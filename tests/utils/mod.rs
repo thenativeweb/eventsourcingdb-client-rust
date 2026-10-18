@@ -1,10 +1,22 @@
 use chrono::{TimeDelta, Utc};
-use eventsourcingdb::{Event, EventCandidate, TraceInfo, container::Container};
+use eventsourcingdb::{
+    Event, EventCandidate, TraceInfo,
+    container::{Container, ContainerBuilder},
+};
 use serde_json::{Value, json};
+use std::env;
+
+/// The image tag the tests start EventSourcingDB with, taken from `EVENTSOURCINGDB_IMAGE_TAG`, and `preview` if it is not set
+fn image_tag() -> String {
+    env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string())
+}
+
+pub fn create_test_container_builder() -> ContainerBuilder {
+    Container::builder().with_image_tag(&image_tag())
+}
 
 pub async fn create_test_container() -> Container {
-    Container::builder()
-        .with_image_tag("preview")
+    create_test_container_builder()
         .start()
         .await
         .expect("Failed to start test container")

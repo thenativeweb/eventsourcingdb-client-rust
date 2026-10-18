@@ -1,5 +1,5 @@
 mod utils;
-use eventsourcingdb::{Event, container::Container};
+use eventsourcingdb::Event;
 use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use tokio_test::assert_err;
@@ -271,8 +271,7 @@ async fn verify_broken_event_hash() {
 
 #[tokio::test]
 async fn verify_event_signature() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -292,8 +291,7 @@ async fn verify_event_signature() {
 
 #[tokio::test]
 async fn verify_event_signatures_of_written_and_read_events() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -322,8 +320,7 @@ async fn verify_event_signatures_of_written_and_read_events() {
 
 #[tokio::test]
 async fn verify_event_signature_with_broken_signature() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -349,8 +346,7 @@ async fn verify_event_signature_with_broken_signature() {
 
 #[tokio::test]
 async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -364,8 +360,7 @@ async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
 
 #[tokio::test]
 async fn get_signing_key_returns_none_without_a_signing_key() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .start()
         .await
         .expect("Failed to start test container");

@@ -199,7 +199,8 @@ impl Event {
     /// use eventsourcingdb::event::EventCandidate;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -374,7 +375,8 @@ where
     /// use eventsourcingdb::event::{Event, ToDataFrame};
     /// use futures::StreamExt;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
