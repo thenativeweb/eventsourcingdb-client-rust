@@ -204,11 +204,45 @@ async fn wait_until_ready(
                 return Ok(());
             }
         }
+        // A container that exited never becomes ready, so waiting longer is pointless.
+        if let Some(exit_code) = instance.exit_code().await? {
+            return Err(exited_error(instance, exit_code).await.into());
+        }
         if Instant::now() >= deadline {
             return Err(TestcontainersError::from(WaitContainerError::StartupTimeout).into());
         }
         sleep(POLL_INTERVAL).await;
     }
+}
+
+/// Describes a container that exited before EventSourcingDB answered, with its exit code and the last lines of its
+/// output, which tell why it exited.
+async fn exited_error(
+    instance: &ContainerAsync<GenericImage>,
+    exit_code: i64,
+) -> TestcontainersError {
+    /// How many of the last lines of stdout and stderr the error names
+    const LAST_LINES: usize = 10;
+
+    let last_lines = |output: Vec<u8>| {
+        let output = String::from_utf8_lossy(&output).into_owned();
+        let lines: Vec<&str> = output.lines().collect();
+        lines[lines.len().saturating_sub(LAST_LINES)..].join("\n")
+    };
+    let stdout = instance
+        .stdout_to_vec()
+        .await
+        .map(last_lines)
+        .unwrap_or_default();
+    let stderr = instance
+        .stderr_to_vec()
+        .await
+        .map(last_lines)
+        .unwrap_or_default();
+
+    TestcontainersError::other(format!(
+        "The container exited with code {exit_code} before EventSourcingDB answered. The last lines of its stdout:\n{stdout}\nThe last lines of its stderr:\n{stderr}"
+    ))
 }
 
 /// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
