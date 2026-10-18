@@ -49,6 +49,10 @@ use url::{Host, Url};
 
 use crate::{client::Client, error::ContainerError};
 
+/// How long starting the container may take until EventSourcingDB answers, which is generous, since a busy Docker
+/// may take far longer than usual to start a container
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Builder for the [Container].
 ///
 /// **You should not use this directly**, but use the [`Container::builder`] method instead.
@@ -149,7 +153,7 @@ impl ContainerBuilder {
                     .with_port(self.internal_port)
                     .with_expected_status_code(200u16),
             )))
-            .with_startup_timeout(std::time::Duration::from_secs(10));
+            .with_startup_timeout(STARTUP_TIMEOUT);
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
             cmd_args.push("--signing-key-file=/tmp/signing_key.pem");
