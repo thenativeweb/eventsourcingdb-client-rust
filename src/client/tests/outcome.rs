@@ -4,7 +4,8 @@ use serde_json::json;
 use tokio::{net::TcpListener, time::timeout};
 
 use super::{
-    Api, BOTH_APIS, Client, GUARD_TIMEOUT, Reply, create_client, start_server, test_candidate,
+    Api, BOTH_APIS, Client, GUARD_TIMEOUT, Reply, STALL_TIMEOUT, create_client, start_server,
+    test_candidate,
 };
 use crate::{
     client::api_version::ApiVersion,
@@ -112,6 +113,47 @@ async fn a_write_is_certainly_not_stored_if_the_connection_could_not_be_establis
             );
         }
     }
+}
+
+#[tokio::test]
+async fn a_write_is_certainly_not_stored_if_establishing_the_connection_stalls() {
+    // The server accepts the connection, but never answers the TLS handshake, so the connection is never
+    // established.
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind a port");
+    let address = listener.local_addr().expect("Failed to get the address");
+    let server = tokio::spawn(async move {
+        let mut sockets = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            sockets.push(socket);
+        }
+    });
+
+    for (api, api_version) in [(Api::V1, ApiVersion::V1), (Api::V2, ApiVersion::V2)] {
+        for write in BOTH_WRITES {
+            let client = Client::builder(format!("https://{address}/").parse().unwrap(), "secret")
+                .stall_timeout(STALL_TIMEOUT)
+                .build();
+            client
+                .api_version
+                .set(api_version)
+                .expect("Failed to set the version of the API");
+
+            let error = timeout(GUARD_TIMEOUT, write.send(&client))
+                .await
+                .expect("The write did not end")
+                .expect_err("Expected the write to fail");
+            assert_not_stored(
+                &error,
+                |error| matches!(error, ClientError::ConnectionStalled),
+                &format!(
+                    "{write:?} through {api:?} whose connection stalls while it is established"
+                ),
+            );
+        }
+    }
+    server.abort();
 }
 
 #[tokio::test]

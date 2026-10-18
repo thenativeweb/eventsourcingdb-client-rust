@@ -284,7 +284,8 @@ pub async fn write_events(
         events,
         preconditions,
     };
-    let request = http.request(Method::POST, "/api/v2/data/write-events", Some(&body))?;
+    let (request, hand_over) =
+        http.write_request(Method::POST, "/api/v2/data/write-events", &body)?;
 
     let writing = async {
         let response = send_request(http, request, Answer::Single).await?;
@@ -292,7 +293,7 @@ pub async fn write_events(
             .try_collect()
             .await
     };
-    outcome::of_write(writing.await, is_refusal)
+    outcome::of_write(writing.await, &hand_over, is_refusal)
 }
 
 /// Tells whether the server refused a write through the v2 API before storing anything, which it does with every
@@ -321,11 +322,8 @@ pub async fn register_event_schema(
         ty: event_type,
         schema,
     };
-    let request = http.request(
-        Method::POST,
-        "/api/v2/data/register-event-schema",
-        Some(&body),
-    )?;
+    let (request, hand_over) =
+        http.write_request(Method::POST, "/api/v2/data/register-event-schema", &body)?;
 
     let registering = async {
         let response = send_request(http, request, Answer::Single).await?;
@@ -342,7 +340,7 @@ pub async fn register_event_schema(
             _ => Err(ClientError::InvalidEventType),
         }
     };
-    outcome::of_write(registering.await, is_refusal)
+    outcome::of_write(registering.await, &hand_over, is_refusal)
 }
 
 pub async fn read_event_type(http: &Http, event_type: &str) -> Result<EventType, ClientError> {

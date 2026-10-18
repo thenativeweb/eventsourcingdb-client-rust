@@ -331,8 +331,13 @@ async fn request_write<R: OneShotRequest>(
     http: &Http,
     endpoint: R,
 ) -> Result<R::Response, ClientError> {
-    let request = build(http, &endpoint)?;
-    outcome::of_write(read_oneshot(http, &endpoint, request).await, is_refusal)
+    let body = endpoint.body().transpose()?;
+    let (request, hand_over) = http.write_request(endpoint.method(), endpoint.url_path(), &body)?;
+    outcome::of_write(
+        read_oneshot(http, &endpoint, request).await,
+        &hand_over,
+        is_refusal,
+    )
 }
 
 /// Tells whether the server refused a write through the v1 API before storing anything, which it does with every
