@@ -7,7 +7,7 @@ use super::{ClientRequest, StreamingRequest};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ListSubjectsRequest<'a> {
+pub struct ReadSubjectsRequest<'a> {
     pub base_subject: &'a str,
 }
 
@@ -16,7 +16,7 @@ pub struct Subject {
     pub subject: String,
 }
 
-impl ClientRequest for ListSubjectsRequest<'_> {
+impl ClientRequest for ReadSubjectsRequest<'_> {
     const URL_PATH: &'static str = "/api/v1/read-subjects";
     const METHOD: Method = Method::POST;
 
@@ -24,7 +24,7 @@ impl ClientRequest for ListSubjectsRequest<'_> {
         Some(Ok(self))
     }
 }
-impl StreamingRequest for ListSubjectsRequest<'_> {
+impl StreamingRequest for ReadSubjectsRequest<'_> {
     type ItemType = Subject;
     const ITEM_TYPE_NAME: &'static str = "subject";
 }

@@ -1,22 +1,22 @@
 //! This is a purely internal module to represent client requests to the database.
 
-pub mod list_event_types;
-mod list_subjects;
 mod observe_events;
 mod ping;
 mod read_event_type;
+mod read_event_types;
 mod read_events;
+mod read_subjects;
 mod register_event_schema;
 mod run_eventql_query;
 mod verify_api_token;
 mod write_events;
 
-pub use list_event_types::ListEventTypesRequest;
-pub use list_subjects::ListSubjectsRequest;
 pub use observe_events::ObserveEventsRequest;
 pub use ping::PingRequest;
 pub use read_event_type::ReadEventTypeRequest;
+pub use read_event_types::{ReadEventTypesRequest, V1EventType};
 pub use read_events::ReadEventsRequest;
+pub use read_subjects::ReadSubjectsRequest;
 pub use register_event_schema::RegisterEventSchemaRequest;
 pub use run_eventql_query::RunEventqlQueryRequest;
 use serde_json::value::RawValue;

@@ -32,11 +32,11 @@ use crate::{
     request_options::EventType,
 };
 use client_request::{
-    ClientRequest, ListEventTypesRequest, ListSubjectsRequest, ObserveEventsRequest,
-    OneShotRequest, PingRequest, ReadEventsRequest, RegisterEventSchemaRequest,
-    RunEventqlQueryRequest, StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
+    ClientRequest, ObserveEventsRequest, OneShotRequest, PingRequest, ReadEventTypesRequest,
+    ReadEventsRequest, ReadSubjectsRequest, RegisterEventSchemaRequest, RunEventqlQueryRequest,
+    StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
 };
-use futures::{Stream, TryStreamExt};
+use futures::{Stream, TryStreamExt, future};
 pub use precondition::Precondition;
 use reqwest;
 use std::time::Duration;
@@ -368,7 +368,7 @@ impl Client {
     /// });
     /// client.register_event_schema(event_type, &schema).await.expect("Failed to register event types");
     /// let type_info = client.read_event_type(event_type).await.expect("Failed to read event type");
-    /// println!("Found Type {} with schema {:?}", type_info.name, type_info.schema);
+    /// println!("Found Type {} with schema {:?}", type_info.ty, type_info.schema);
     /// # })
     /// ```
     ///
@@ -380,7 +380,7 @@ impl Client {
                 event_type: event_type.to_string(),
             })
             .await?;
-        Ok(response)
+        Ok(response.into())
     }
 
     /// Observe events from the DB instance.
@@ -496,10 +496,12 @@ impl Client {
             .await
     }
 
-    /// List all subjects in the DB instance.
+    /// Reads the subjects in the DB instance, the given subject alone or together with all subjects below it.
     ///
-    /// To get all subjects in the DB, just pass `None` as the `base_subject`.
+    /// The `recursive` option decides which: to read all subjects in the DB, pass `/` as the subject and set
+    /// `recursive` to `true`.
     /// ```
+    /// use eventsourcingdb::request_options::ReadSubjectsOptions;
     /// use futures::StreamExt;
     /// # tokio_test::block_on(async {
     /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
@@ -509,15 +511,19 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
-    /// let mut subject_stream = client.list_subjects(None).await.expect("Failed to list subjects");
+    /// let mut subject_stream = client
+    ///     .read_subjects("/", ReadSubjectsOptions { recursive: true })
+    ///     .await
+    ///     .expect("Failed to read subjects");
     /// while let Some(subject) = subject_stream.next().await {
     ///     println!("Found subject {}", subject.expect("Error while reading subjects"));
     /// }
     /// # })
     /// ```
     ///
-    /// To get all subjects under /test in the DB, just pass `Some("/test")` as the `base_subject`.
+    /// To read whether there is a subject `/test`, without the subjects below it, set `recursive` to `false`.
     /// ```
+    /// use eventsourcingdb::request_options::ReadSubjectsOptions;
     /// use futures::StreamExt;
     /// # tokio_test::block_on(async {
     /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
@@ -527,7 +533,10 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
-    /// let mut subject_stream = client.list_subjects(Some("/test")).await.expect("Failed to list subjects");
+    /// let mut subject_stream = client
+    ///     .read_subjects("/test", ReadSubjectsOptions { recursive: false })
+    ///     .await
+    ///     .expect("Failed to read subjects");
     /// while let Some(subject) = subject_stream.next().await {
     ///     println!("Found subject {}", subject.expect("Error while reading subjects"));
     /// }
@@ -536,19 +545,27 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    pub async fn list_subjects(
+    pub async fn read_subjects(
         &self,
-        base_subject: Option<&str>,
+        subject: &str,
+        options: request_options::ReadSubjectsOptions,
     ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
-        let response = self
-            .request_streaming(ListSubjectsRequest {
-                base_subject: base_subject.unwrap_or("/"),
+        let subjects = self
+            .request_streaming(ReadSubjectsRequest {
+                base_subject: subject,
             })
-            .await?;
-        Ok(response.map_ok(|payload| payload.subject))
+            .await?
+            .map_ok(|payload| payload.subject);
+
+        // The v1 API always reads the subjects below the subject as well, so the subject alone is what remains
+        // after leaving them out.
+        let subject = subject.to_string();
+        Ok(subjects.try_filter(move |read_subject| {
+            future::ready(options.recursive || *read_subject == subject)
+        }))
     }
 
-    /// List all event types in the DB instance.
+    /// Reads all event types in the DB instance.
     ///
     /// ```
     /// use eventsourcingdb::event::EventCandidate;
@@ -562,20 +579,20 @@ impl Client {
     /// # let db_url = container.get_base_url().await.unwrap();
     /// # let api_token = container.get_api_token();
     /// let client = eventsourcingdb::client::Client::new(db_url, api_token);
-    /// let mut type_stream = client.list_event_types().await.expect("Failed to list event types");
-    /// while let Some(ty) = type_stream.next().await {
-    ///     println!("Found Type {}", ty.expect("Error while reading types").name);
+    /// let mut type_stream = client.read_event_types().await.expect("Failed to read event types");
+    /// while let Some(event_type) = type_stream.next().await {
+    ///     println!("Found type {}", event_type.expect("Error while reading types").ty);
     /// }
     /// # })
     /// ```
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    pub async fn list_event_types(
+    pub async fn read_event_types(
         &self,
     ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
-        let response = self.request_streaming(ListEventTypesRequest).await?;
-        Ok(response)
+        let event_types = self.request_streaming(ReadEventTypesRequest).await?;
+        Ok(event_types.map_ok(EventType::from))
     }
 
     /// Writes events to the DB instance.

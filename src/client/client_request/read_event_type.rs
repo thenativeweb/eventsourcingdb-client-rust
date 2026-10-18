@@ -2,9 +2,8 @@ use reqwest::Method;
 use serde::Serialize;
 
 use crate::{
-    client::client_request::{ClientRequest, OneShotRequest},
+    client::client_request::{ClientRequest, OneShotRequest, V1EventType},
     error::ClientError,
-    request_options::EventType,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,5 +23,5 @@ impl ClientRequest for ReadEventTypeRequest {
     }
 }
 impl OneShotRequest for ReadEventTypeRequest {
-    type Response = EventType;
+    type Response = V1EventType;
 }

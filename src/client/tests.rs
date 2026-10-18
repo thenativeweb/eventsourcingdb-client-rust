@@ -1,171 +1,37 @@
+mod server;
+
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
-    time::{sleep, timeout},
-};
-use url::Url;
+use tokio::time::{sleep, timeout};
 
 use super::Client;
-use crate::{error::ClientError, event::EventCandidate};
+use crate::{
+    error::{ClientError, DbApiError, code},
+    event::EventCandidate,
+    request_options::ReadSubjectsOptions,
+};
+use server::{GUARD_TIMEOUT, Reply, Request, TestServer};
 
 /// The stall timeout the tests use instead of the 30 seconds
 const STALL_TIMEOUT: Duration = Duration::from_millis(250);
-/// How long the tests wait at most, so that a stream that never ends does not block them forever
-const GUARD_TIMEOUT: Duration = Duration::from_secs(5);
 const HEARTBEAT_LINE: &str = r#"{"type":"heartbeat","payload":{}}"#;
 
-/// A local HTTP server that stands in for EventSourcingDB.
-///
-/// It answers a single request as the given [`Response`] says, and then keeps the connection open without sending
-/// anything else.
-struct TestServer {
-    base_url: Url,
-    /// Resolves once the client has closed the connection
-    connection_closed: oneshot::Receiver<()>,
+/// Starts a server that answers every request as the given reply says.
+async fn start_server(reply: Reply) -> TestServer {
+    TestServer::start(move |_: &Request| reply.clone()).await
 }
 
-/// How the [`TestServer`] answers the request
-enum Response {
-    /// Sends nothing at all, not even the head of the response
-    Nothing,
-    /// Sends status 200 and the `Server` header the client requires, then the given chunks of the body, each one
-    /// after its delay, and keeps the body open
-    Open(Vec<(Duration, String)>),
-    /// Sends the same as [`Response::Open`], and then ends the body
-    Complete(Vec<(Duration, String)>),
-    /// Sends the given status, headers, and body as plain text, and the `Server` header the client requires if
-    /// `is_from_eventsourcingdb` is set
-    Text {
-        status: u16,
-        headers: Vec<(&'static str, &'static str)>,
-        body: &'static str,
-        is_from_eventsourcingdb: bool,
-    },
-}
-
-impl Response {
-    /// An answer with the given status and text, as EventSourcingDB sends it
-    fn text(status: u16, body: &'static str) -> Self {
-        Self::Text {
-            status,
-            headers: vec![],
-            body,
-            is_from_eventsourcingdb: true,
-        }
-    }
-}
-
-impl TestServer {
-    /// Starts a server that sends the given lines, each one after its delay, and keeps the body open.
-    async fn start(lines: Vec<(Duration, String)>) -> Self {
-        Self::start_with(Response::Open(
-            lines
-                .into_iter()
-                .map(|(delay, line)| (delay, format!("{line}\n")))
-                .collect(),
-        ))
-        .await
-    }
-
-    async fn start_with(response: Response) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("Failed to start test server");
-        let address = listener
-            .local_addr()
-            .expect("Failed to get address of test server");
-        let base_url = format!("http://{address}/")
-            .parse()
-            .expect("Failed to parse URL of test server");
-        let (close_connection, connection_closed) = oneshot::channel();
-
-        drop(tokio::spawn(async move {
-            let (mut socket, _) = listener
-                .accept()
-                .await
-                .expect("Failed to accept connection");
-            read_request(&mut socket).await;
-            send_response(&mut socket, response).await;
-
-            // Keep the connection open until the client closes it.
-            let mut buffer = [0; 1024];
-            while let Ok(1..) = socket.read(&mut buffer).await {}
-            let _ = close_connection.send(());
-        }));
-
-        Self {
-            base_url,
-            connection_closed,
-        }
-    }
-}
-
-async fn read_request(socket: &mut TcpStream) {
-    let mut reader = BufReader::new(socket);
-    let mut content_length = 0;
-    loop {
-        let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
-            .await
-            .expect("Failed to read request");
-        if read == 0 || line == "\r\n" {
-            break;
-        }
-        if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
-            content_length = value.trim().parse().expect("Invalid content length");
-        }
-    }
-    let mut body = vec![0; content_length];
-    let _ = reader
-        .read_exact(&mut body)
-        .await
-        .expect("Failed to read request body");
-}
-
-async fn send_response(socket: &mut TcpStream, response: Response) {
-    let (chunks, is_complete) = match response {
-        Response::Nothing => return,
-        Response::Open(chunks) => (chunks, false),
-        Response::Complete(chunks) => (chunks, true),
-        Response::Text {
-            status,
-            headers,
-            body,
-            is_from_eventsourcingdb,
-        } => {
-            let mut head =
-                format!("HTTP/1.1 {status} Status\r\nContent-Type: text/plain; charset=utf-8\r\n");
-            if is_from_eventsourcingdb {
-                head.push_str("Server: EventSourcingDB/test\r\n");
-            }
-            for (name, value) in headers {
-                head.push_str(&format!("{name}: {value}\r\n"));
-            }
-            let answer = format!("{head}Content-Length: {}\r\n\r\n{body}", body.len());
-            let _ = socket.write_all(answer.as_bytes()).await;
-            return;
-        }
-    };
-    let head = "HTTP/1.1 200 OK\r\nServer: EventSourcingDB/test\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\n\r\n";
-    if socket.write_all(head.as_bytes()).await.is_err() {
-        return;
-    }
-    for (delay, chunk) in chunks {
-        sleep(delay).await;
-        let chunk = format!("{:x}\r\n{chunk}\r\n", chunk.len());
-        if socket.write_all(chunk.as_bytes()).await.is_err() {
-            return;
-        }
-    }
-    if is_complete {
-        let _ = socket.write_all(b"0\r\n\r\n").await;
-    }
+/// Starts a server that sends the given lines, each one after its delay, and keeps the body open.
+async fn start_streaming_server(lines: Vec<(Duration, String)>) -> TestServer {
+    start_server(Reply::Open(
+        lines
+            .into_iter()
+            .map(|(delay, line)| (delay, format!("{line}\n")))
+            .collect(),
+    ))
+    .await
 }
 
 fn event_line(id: u32) -> String {
@@ -192,9 +58,22 @@ fn row_line(value: u32) -> String {
     json!({ "type": "row", "payload": { "value": value } }).to_string()
 }
 
+fn subject_line(subject: &str) -> String {
+    json!({ "type": "subject", "payload": { "subject": subject } }).to_string()
+}
+
 fn create_client(server: &TestServer) -> Client {
     Client::builder(server.base_url.clone(), "secret")
         .stall_timeout(STALL_TIMEOUT)
+        .build()
+}
+
+fn test_candidate() -> EventCandidate {
+    EventCandidate::builder()
+        .source("https://www.eventsourcingdb.io")
+        .subject("/test")
+        .ty("io.eventsourcingdb.test")
+        .data(json!({ "value": 1 }))
         .build()
 }
 
@@ -203,24 +82,42 @@ fn is_stall_error(error: &ClientError) -> bool {
     matches!(error, ClientError::ConnectionStalled)
 }
 
+/// Returns the [`DbApiError`] of the error, and panics if it is none.
+fn db_api_error(error: ClientError) -> DbApiError {
+    match error {
+        ClientError::DbApiError(error) => error,
+        error => panic!("Expected a DbApiError, but got {error:?}"),
+    }
+}
+
+/// Sends the request to a server that answers with the given reply, and returns the error the request fails with.
+async fn fail_with<T: std::fmt::Debug, F: Future<Output = Result<T, ClientError>>>(
+    reply: Reply,
+    request: impl FnOnce(Client) -> F,
+) -> ClientError {
+    let server = start_server(reply).await;
+    let client = create_client(&server);
+    let result = timeout(GUARD_TIMEOUT, request(client))
+        .await
+        .expect("The request did not end");
+    result.expect_err("Expected the request to fail")
+}
+
 #[tokio::test]
-async fn list_subjects_decodes_subject_objects() {
-    let server = TestServer::start(vec![
+async fn read_subjects_decodes_subject_objects() {
+    let server = start_streaming_server(vec![
+        (Duration::ZERO, subject_line("/test")),
         (
             Duration::ZERO,
-            json!({ "type": "subject", "payload": { "subject": "/test" } }).to_string(),
-        ),
-        (
-            Duration::ZERO,
-            json!({ "type": "error", "payload": {} }).to_string(),
+            json!({ "type": "error", "payload": { "error": "something failed" } }).to_string(),
         ),
     ])
     .await;
     let client = create_client(&server);
     let mut subjects = client
-        .list_subjects(None)
+        .read_subjects("/", ReadSubjectsOptions { recursive: true })
         .await
-        .expect("Failed to list subjects");
+        .expect("Failed to read subjects");
 
     let subject = timeout(GUARD_TIMEOUT, subjects.next())
         .await
@@ -233,14 +130,78 @@ async fn list_subjects_decodes_subject_objects() {
         .await
         .expect("The database error did not arrive");
     assert!(
-        matches!(&result, Some(Err(ClientError::DbApiError(error))) if error.status == 200 && error.code.is_empty() && error.description == "{}"),
+        matches!(&result, Some(Err(ClientError::DbApiError(error))) if error.status == 200 && error.code.is_empty() && error.description == "something failed"),
         "Expected a DbApiError, but got {result:?}"
     );
 }
 
 #[tokio::test]
-async fn observe_events_ends_with_heartbeat_timeout() {
-    let server = TestServer::start(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
+async fn read_subjects_keeps_only_the_subject_itself_if_not_recursive() {
+    let lines = [
+        subject_line("/test"),
+        subject_line("/test/42"),
+        subject_line("/test/42/23"),
+    ];
+
+    let mut server = start_server(Reply::lines(&lines)).await;
+    let client = create_client(&server);
+    let subjects: Vec<String> = client
+        .read_subjects("/test", ReadSubjectsOptions { recursive: false })
+        .await
+        .expect("Failed to read subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    assert_eq!(subjects, ["/test"]);
+    // The v1 API always reads the subjects below the subject as well.
+    let request = server.next_request().await;
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/api/v1/read-subjects");
+    assert_eq!(request.body, r#"{"baseSubject":"/test"}"#);
+
+    let server = start_server(Reply::lines(&lines)).await;
+    let client = create_client(&server);
+    let subjects: Vec<String> = client
+        .read_subjects("/test", ReadSubjectsOptions { recursive: true })
+        .await
+        .expect("Failed to read subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    assert_eq!(subjects, ["/test", "/test/42", "/test/42/23"]);
+}
+
+#[tokio::test]
+async fn read_event_types_tells_whether_an_event_type_has_events() {
+    let server = start_server(Reply::lines(&[
+        json!({ "type": "eventType", "payload": { "eventType": "io.eventsourcingdb.test", "isPhantom": false } })
+            .to_string(),
+        json!({ "type": "eventType", "payload": { "eventType": "io.eventsourcingdb.schema", "isPhantom": true, "schema": { "type": "object" } } })
+            .to_string(),
+    ]))
+    .await;
+    let client = create_client(&server);
+    let event_types: Vec<_> = client
+        .read_event_types()
+        .await
+        .expect("Failed to read event types")
+        .try_collect()
+        .await
+        .expect("Failed to read event types");
+
+    assert_eq!(event_types.len(), 2);
+    assert_eq!(event_types[0].ty, "io.eventsourcingdb.test");
+    assert!(event_types[0].has_events);
+    assert_eq!(event_types[0].schema, None);
+    assert_eq!(event_types[1].ty, "io.eventsourcingdb.schema");
+    assert!(!event_types[1].has_events);
+    assert_eq!(event_types[1].schema, Some(json!({ "type": "object" })));
+}
+
+#[tokio::test]
+async fn observe_events_ends_once_the_connection_stalls() {
+    let mut server =
+        start_streaming_server(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
     let client = create_client(&server);
 
     let started = Instant::now();
@@ -258,10 +219,7 @@ async fn observe_events_ends_with_heartbeat_timeout() {
     );
     assert!(started.elapsed() >= STALL_TIMEOUT);
     assert!(events_stream.next().await.is_none());
-    timeout(GUARD_TIMEOUT, server.connection_closed)
-        .await
-        .expect("The connection was not closed after the heartbeat timeout")
-        .expect("The test server stopped unexpectedly");
+    server.connection_closed().await;
 }
 
 #[tokio::test]
@@ -269,7 +227,7 @@ async fn observe_events_keeps_running_while_heartbeats_arrive() {
     let heartbeats = (0..30)
         .map(|_| (Duration::from_millis(50), HEARTBEAT_LINE.to_string()))
         .collect();
-    let server = TestServer::start(heartbeats).await;
+    let server = start_streaming_server(heartbeats).await;
     let client = create_client(&server);
 
     let started = Instant::now();
@@ -283,7 +241,7 @@ async fn observe_events_keeps_running_while_heartbeats_arrive() {
         "Expected the stream to keep running while heartbeats arrive, but got {result:?}"
     );
 
-    // Once the heartbeats stop, the stream ends with a heartbeat timeout.
+    // Once the heartbeats stop, the stream ends with a stalled connection.
     let result = timeout(GUARD_TIMEOUT, events_stream.next())
         .await
         .expect("The stream did not end after the heartbeats stopped");
@@ -295,8 +253,8 @@ async fn observe_events_keeps_running_while_heartbeats_arrive() {
 }
 
 #[tokio::test]
-async fn observe_events_delivers_events_within_heartbeat_timeout() {
-    let server = TestServer::start(vec![
+async fn observe_events_delivers_events_within_the_stall_timeout() {
+    let server = start_streaming_server(vec![
         (Duration::ZERO, HEARTBEAT_LINE.to_string()),
         (Duration::from_millis(150), event_line(0)),
         (Duration::from_millis(150), event_line(1)),
@@ -328,8 +286,9 @@ async fn observe_events_delivers_events_within_heartbeat_timeout() {
 }
 
 #[tokio::test]
-async fn observe_events_ends_without_heartbeat_timeout_when_cancelled() {
-    let server = TestServer::start(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
+async fn observe_events_ends_without_an_error_when_dropped() {
+    let mut server =
+        start_streaming_server(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
     let client = create_client(&server);
 
     let events_stream = client
@@ -346,15 +305,13 @@ async fn observe_events_ends_without_heartbeat_timeout_when_cancelled() {
         "Expected the stream to end without an item, but got {result:?}"
     );
     drop(events_stream);
-    timeout(GUARD_TIMEOUT, server.connection_closed)
-        .await
-        .expect("The connection was not closed after cancelling")
-        .expect("The test server stopped unexpectedly");
+    server.connection_closed().await;
 }
 
 #[tokio::test]
-async fn run_eventql_query_ends_with_heartbeat_timeout() {
-    let server = TestServer::start(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
+async fn run_eventql_query_ends_once_the_connection_stalls() {
+    let mut server =
+        start_streaming_server(vec![(Duration::ZERO, HEARTBEAT_LINE.to_string())]).await;
     let client = create_client(&server);
 
     let started = Instant::now();
@@ -372,15 +329,12 @@ async fn run_eventql_query_ends_with_heartbeat_timeout() {
     );
     assert!(started.elapsed() >= STALL_TIMEOUT);
     assert!(rows_stream.next().await.is_none());
-    timeout(GUARD_TIMEOUT, server.connection_closed)
-        .await
-        .expect("The connection was not closed after the heartbeat timeout")
-        .expect("The test server stopped unexpectedly");
+    server.connection_closed().await;
 }
 
 #[tokio::test]
-async fn run_eventql_query_delivers_rows_within_heartbeat_timeout() {
-    let server = TestServer::start(vec![
+async fn run_eventql_query_delivers_rows_within_the_stall_timeout() {
+    let server = start_streaming_server(vec![
         (Duration::ZERO, HEARTBEAT_LINE.to_string()),
         (Duration::from_millis(150), row_line(0)),
         (Duration::from_millis(150), row_line(1)),
@@ -415,7 +369,7 @@ const PING_RESPONSE: &str = r#"{"specversion":"1.0","id":"0","time":"2026-10-03T
 
 /// Starts a server that sends nothing at all, and a client for it.
 async fn start_silent_server() -> (TestServer, Client) {
-    let server = TestServer::start_with(Response::Nothing).await;
+    let server = start_server(Reply::Nothing).await;
     let client = create_client(&server);
     (server, client)
 }
@@ -445,19 +399,12 @@ fn stall_timeout_rejects_zero() {
 
 #[tokio::test]
 async fn every_request_fails_once_no_response_arrives() {
-    let candidate = EventCandidate::builder()
-        .source("https://www.eventsourcingdb.io")
-        .subject("/test")
-        .ty("io.eventsourcingdb.test")
-        .data(json!({ "value": 1 }))
-        .build();
-
     let (_server, client) = start_silent_server().await;
     assert_stalls(client.ping()).await;
     let (_server, client) = start_silent_server().await;
     assert_stalls(client.verify_api_token()).await;
     let (_server, client) = start_silent_server().await;
-    assert_stalls(client.write_events(vec![candidate], vec![])).await;
+    assert_stalls(client.write_events(vec![test_candidate()], vec![])).await;
     let (_server, client) = start_silent_server().await;
     assert_stalls(
         client.register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" })),
@@ -478,14 +425,20 @@ async fn every_request_fails_once_no_response_arrives() {
     })
     .await;
     let (_server, client) = start_silent_server().await;
-    assert_stalls(async { client.list_subjects(None).await.map(|_| ()) }).await;
+    assert_stalls(async {
+        client
+            .read_subjects("/", ReadSubjectsOptions { recursive: true })
+            .await
+            .map(|_| ())
+    })
+    .await;
     let (_server, client) = start_silent_server().await;
-    assert_stalls(async { client.list_event_types().await.map(|_| ()) }).await;
+    assert_stalls(async { client.read_event_types().await.map(|_| ()) }).await;
 }
 
 #[tokio::test]
 async fn ping_fails_once_the_body_stalls() {
-    let server = TestServer::start_with(Response::Open(vec![(
+    let mut server = start_server(Reply::Open(vec![(
         Duration::ZERO,
         PING_RESPONSE[..20].to_string(),
     )]))
@@ -493,10 +446,7 @@ async fn ping_fails_once_the_body_stalls() {
     let client = create_client(&server);
 
     assert_stalls(client.ping()).await;
-    timeout(GUARD_TIMEOUT, server.connection_closed)
-        .await
-        .expect("The connection was not closed after the stall")
-        .expect("The test server stopped unexpectedly");
+    server.connection_closed().await;
 }
 
 #[tokio::test]
@@ -508,7 +458,7 @@ async fn ping_succeeds_while_parts_of_the_body_keep_arriving() {
         .map(|chunk| (chunk_delay, String::from_utf8(chunk.to_vec()).unwrap()))
         .collect::<Vec<_>>();
     let total_delay = chunk_delay * u32::try_from(chunks.len()).unwrap();
-    let server = TestServer::start_with(Response::Complete(chunks)).await;
+    let server = start_server(Reply::Complete(chunks)).await;
     let client = create_client(&server);
 
     let started = Instant::now();
@@ -524,25 +474,20 @@ async fn ping_succeeds_while_parts_of_the_body_keep_arriving() {
 
 #[tokio::test]
 async fn ping_fails_with_a_reqwest_error_if_the_response_is_no_json() {
-    let server = TestServer::start_with(Response::Complete(vec![(
-        Duration::ZERO,
-        "no json".to_string(),
-    )]))
+    let error = fail_with(
+        Reply::Complete(vec![(Duration::ZERO, "no json".to_string())]),
+        |client| async move { client.ping().await },
+    )
     .await;
-    let client = create_client(&server);
-
-    let result = timeout(GUARD_TIMEOUT, client.ping())
-        .await
-        .expect("The ping did not end");
     assert!(
-        matches!(&result, Err(ClientError::ReqwestError(error)) if error.is_decode()),
-        "Expected a decode error, but got {result:?}"
+        matches!(&error, ClientError::ReqwestError(error) if error.is_decode()),
+        "Expected a decode error, but got {error:?}"
     );
 }
 
 #[tokio::test]
 async fn read_events_ends_once_the_stream_stalls() {
-    let server = TestServer::start(vec![(Duration::ZERO, event_line(0))]).await;
+    let mut server = start_streaming_server(vec![(Duration::ZERO, event_line(0))]).await;
     let client = create_client(&server);
 
     let mut events_stream = client
@@ -566,10 +511,7 @@ async fn read_events_ends_once_the_stream_stalls() {
     );
     assert!(started.elapsed() >= STALL_TIMEOUT);
     assert!(events_stream.next().await.is_none());
-    timeout(GUARD_TIMEOUT, server.connection_closed)
-        .await
-        .expect("The connection was not closed after the stall")
-        .expect("The test server stopped unexpectedly");
+    server.connection_closed().await;
 }
 
 #[tokio::test]
@@ -581,7 +523,7 @@ async fn observe_events_keeps_running_while_parts_of_a_line_arrive() {
         .chunks(line.len() / 4 + 1)
         .map(|chunk| (chunk_delay, String::from_utf8(chunk.to_vec()).unwrap()))
         .collect();
-    let server = TestServer::start_with(Response::Open(chunks)).await;
+    let server = start_server(Reply::Open(chunks)).await;
     let client = create_client(&server);
 
     let mut events_stream = client
@@ -597,8 +539,8 @@ async fn observe_events_keeps_running_while_parts_of_a_line_arrive() {
 }
 
 #[tokio::test]
-async fn observe_events_ends_with_heartbeat_timeout_after_a_partial_line() {
-    let server = TestServer::start_with(Response::Open(vec![(
+async fn observe_events_ends_once_the_connection_stalls_after_a_partial_line() {
+    let server = start_server(Reply::Open(vec![(
         Duration::ZERO,
         event_line(0)[..20].to_string(),
     )]))
@@ -625,7 +567,7 @@ async fn observe_events_does_not_stall_while_the_caller_is_slow() {
     let lines = (0..30)
         .map(|id| (Duration::from_millis(50), event_line(id)))
         .collect();
-    let server = TestServer::start(lines).await;
+    let server = start_streaming_server(lines).await;
     let client = create_client(&server);
 
     let mut events_stream = client
@@ -648,7 +590,7 @@ async fn observe_events_does_not_stall_while_the_caller_is_slow() {
 
 #[tokio::test]
 async fn streams_are_send_and_unpin() {
-    let server = TestServer::start(vec![]).await;
+    let server = start_streaming_server(vec![]).await;
     let client = create_client(&server);
     let events_stream = client
         .read_events("/test", None)
@@ -656,52 +598,28 @@ async fn streams_are_send_and_unpin() {
         .expect("Failed to read events");
     assert_send_and_unpin(&events_stream);
 
-    let server = TestServer::start(vec![]).await;
+    let server = start_streaming_server(vec![]).await;
     let client = create_client(&server);
     let rows_stream = client
         .run_eventql_query("FROM e IN events PROJECT INTO e")
         .await
         .expect("Failed to run query");
     assert_send_and_unpin(&rows_stream);
-}
 
-/// Sends the request to a server that answers with the given response, and returns the error the request fails with.
-async fn fail_with<T: std::fmt::Debug, F: Future<Output = Result<T, ClientError>>>(
-    response: Response,
-    request: impl FnOnce(Client) -> F,
-) -> ClientError {
-    let server = TestServer::start_with(response).await;
+    let server = start_streaming_server(vec![]).await;
     let client = create_client(&server);
-    let result = timeout(GUARD_TIMEOUT, request(client))
+    let subjects_stream = client
+        .read_subjects("/", ReadSubjectsOptions { recursive: false })
         .await
-        .expect("The request did not end");
-    result.expect_err("Expected the request to fail")
-}
-
-/// Returns the [`DbApiError`](crate::error::DbApiError) of the error, and panics if it is none.
-fn db_api_error(error: ClientError) -> crate::error::DbApiError {
-    match error {
-        ClientError::DbApiError(error) => error,
-        error => panic!("Expected a DbApiError, but got {error:?}"),
-    }
-}
-
-fn test_candidate() -> EventCandidate {
-    EventCandidate::builder()
-        .source("https://www.eventsourcingdb.io")
-        .subject("/test")
-        .ty("io.eventsourcingdb.test")
-        .data(json!({ "value": 1 }))
-        .build()
+        .expect("Failed to read subjects");
+    assert_send_and_unpin(&subjects_stream);
 }
 
 #[tokio::test]
 async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
-    use crate::error::code;
-
     let error = db_api_error(
         fail_with(
-            Response::text(409, "state conflict: precondition failed\n"),
+            Reply::text(409, "state conflict: precondition failed\n"),
             |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
         )
         .await,
@@ -712,7 +630,10 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
 
     let error = db_api_error(
         fail_with(
-            Response::text(409, "schema conflict: event candidate does not match schema: expected string, but got number\n"),
+            Reply::text(
+                409,
+                "schema conflict: event candidate does not match schema: expected string, but got number\n",
+            ),
             |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
         )
         .await,
@@ -721,7 +642,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
 
     let error = db_api_error(
         fail_with(
-            Response::text(409, "schema conflict: schema already exists\n"),
+            Reply::text(409, "schema conflict: schema already exists\n"),
             |client| async move {
                 client
                     .register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" }))
@@ -734,7 +655,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
 
     let error = db_api_error(
         fail_with(
-            Response::text(404, "event type 'io.eventsourcingdb.test' not found\n"),
+            Reply::text(404, "event type 'io.eventsourcingdb.test' not found\n"),
             |client| async move { client.read_event_type("io.eventsourcingdb.test").await },
         )
         .await,
@@ -746,7 +667,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
         "the current operation mode conflicts with the given request: writing is not permitted\n";
     let error = db_api_error(
         fail_with(
-            Response::text(503, operation_mode_conflicts),
+            Reply::text(503, operation_mode_conflicts),
             |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
         )
         .await,
@@ -754,7 +675,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
     assert_eq!(error.code, code::STORE_READ_ONLY);
     let error = db_api_error(
         fail_with(
-            Response::text(503, operation_mode_conflicts),
+            Reply::text(503, operation_mode_conflicts),
             |client| async move { client.read_events("/test", None).await.map(|_| ()) },
         )
         .await,
@@ -763,7 +684,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
 
     let error = db_api_error(
         fail_with(
-            Response::text(507, "insufficient storage\n"),
+            Reply::text(507, "insufficient storage\n"),
             |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
         )
         .await,
@@ -774,7 +695,7 @@ async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
 
 #[tokio::test]
 async fn v1_errors_that_match_no_code_of_the_v2_api_have_none() {
-    let cases: Vec<(u16, &'static str)> = vec![
+    let cases = [
         // A schema conflict with events that already exist, which has no code of its own
         (
             409,
@@ -782,11 +703,12 @@ async fn v1_errors_that_match_no_code_of_the_v2_api_have_none() {
         ),
         (400, "bad request: invalid event type\n"),
         (503, "server is shutting down\n"),
+        // Only writing events fails with 507 for an invalid license.
         (507, "insufficient storage\n"),
     ];
     for (status, text) in cases {
         let error = db_api_error(
-            fail_with(Response::text(status, text), |client| async move {
+            fail_with(Reply::text(status, text), |client| async move {
                 client
                     .register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" }))
                     .await
@@ -801,7 +723,7 @@ async fn v1_errors_that_match_no_code_of_the_v2_api_have_none() {
     // A 404 means an unknown event type only when reading one.
     let error = db_api_error(
         fail_with(
-            Response::text(404, "404 page not found\n"),
+            Reply::text(404, "404 page not found\n"),
             |client| async move { client.read_events("/test", None).await.map(|_| ()) },
         )
         .await,
@@ -811,27 +733,32 @@ async fn v1_errors_that_match_no_code_of_the_v2_api_have_none() {
 
 #[tokio::test]
 async fn a_db_api_error_with_status_429_tells_when_to_try_again() {
+    let mut server = start_server(Reply::Text {
+        status: 429,
+        headers: vec![("Retry-After", "3")],
+        body: "too many requests".to_string(),
+        is_from_eventsourcingdb: true,
+    })
+    .await;
+    let client = create_client(&server);
     let error = db_api_error(
-        fail_with(
-            Response::Text {
-                status: 429,
-                headers: vec![("Retry-After", "3")],
-                body: "too many requests",
-                is_from_eventsourcingdb: true,
-            },
-            |client| async move { client.read_events("/test", None).await.map(|_| ()) },
-        )
-        .await,
+        client
+            .read_events("/test", None)
+            .await
+            .map(|_| ())
+            .expect_err("Expected the request to fail"),
     );
     assert_eq!(error.status, 429);
     assert_eq!(error.retry_after, Some(Duration::from_secs(3)));
     assert_eq!(error.description, "too many requests");
+    // The request is not repeated.
+    let _ = server.next_request().await;
+    assert!(server.received().is_empty());
 
     let error = db_api_error(
-        fail_with(
-            Response::text(429, "too many requests"),
-            |client| async move { client.ping().await },
-        )
+        fail_with(Reply::text(429, "too many requests"), |client| async move {
+            client.ping().await
+        })
         .await,
     );
     assert_eq!(error.retry_after, None);
@@ -839,10 +766,10 @@ async fn a_db_api_error_with_status_429_tells_when_to_try_again() {
     // Only an answer with status 429 tells when to try again.
     let error = db_api_error(
         fail_with(
-            Response::Text {
+            Reply::Text {
                 status: 503,
                 headers: vec![("Retry-After", "3")],
-                body: "server is shutting down",
+                body: "server is shutting down".to_string(),
                 is_from_eventsourcingdb: true,
             },
             |client| async move { client.ping().await },
@@ -855,10 +782,10 @@ async fn a_db_api_error_with_status_429_tells_when_to_try_again() {
 #[tokio::test]
 async fn an_error_that_is_not_from_eventsourcingdb_is_no_db_api_error() {
     let error = fail_with(
-        Response::Text {
+        Reply::Text {
             status: 502,
             headers: vec![],
-            body: "bad gateway",
+            body: "bad gateway".to_string(),
             is_from_eventsourcingdb: false,
         },
         |client| async move { client.ping().await },
@@ -867,5 +794,14 @@ async fn an_error_that_is_not_from_eventsourcingdb_is_no_db_api_error() {
     assert!(
         matches!(error, ClientError::InvalidServerHeader),
         "Expected an invalid server header, but got {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_request_fails_if_the_connection_breaks() {
+    let error = fail_with(Reply::Close, |client| async move { client.ping().await }).await;
+    assert!(
+        matches!(&error, ClientError::ReqwestError(error) if !error.is_connect()),
+        "Expected a broken connection, but got {error:?}"
     );
 }

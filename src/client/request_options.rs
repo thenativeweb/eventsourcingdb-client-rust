@@ -114,15 +114,26 @@ pub struct ObserveFromLatestEventOptions<'a> {
     pub ty: &'a str,
 }
 
+/// Options for reading subjects from the database
+///
+/// There is no default, since whether to read the subjects below the subject as well has to be decided.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ReadSubjectsOptions {
+    /// Whether to read the subjects below the subject as well, or the subject alone
+    pub recursive: bool,
+}
+
 /// Represents an event type in the database
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EventType {
     /// The name of the event type
-    #[serde(rename = "eventType")]
-    pub name: String,
-    /// Whether the event type is a phantom type
-    pub is_phantom: bool,
+    ///
+    /// This field is called `ty` to avoid conflicts with the `type` keyword in Rust.
+    #[serde(rename = "type")]
+    pub ty: String,
+    /// Whether there are events of the event type, which is `false` for an event type that only has a schema
+    pub has_events: bool,
     /// The schema of the event type, if available
     pub schema: Option<Value>,
 }

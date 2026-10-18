@@ -1,4 +1,7 @@
-use eventsourcingdb::{client::Client, container::Container};
+use eventsourcingdb::{
+    client::{Client, request_options::ReadSubjectsOptions},
+    container::Container,
+};
 use futures::StreamExt;
 
 #[tokio::main]
@@ -8,7 +11,9 @@ async fn main() {
     let api_token = db.get_api_token();
     let client = Client::new(base_url, api_token);
 
-    let result = client.list_subjects(Some("/")).await;
+    let result = client
+        .read_subjects("/", ReadSubjectsOptions { recursive: true })
+        .await;
 
     match result {
         Err(err) => panic!("{}", err),
