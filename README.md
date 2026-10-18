@@ -72,7 +72,7 @@ let client = Client::builder(base_url, api_token)
 
 *Note that the stall timeout must be greater than zero, since it can not be turned off. `stall_timeout` panics if you pass `Duration::ZERO`.*
 
-Once the server stalls, the request fails with a `ClientError::ConnectionStalled` error, and a stream returns it and ends. Either way, the connection is closed. When writing events or registering an event schema, the error is wrapped in a `ClientError::OutcomeUnknown` error, since the write may have been stored nonetheless, see [Handling Errors](#handling-errors).
+Once the server stalls, the request fails with a `ClientError::ConnectionStalled` error, and a stream returns it and ends. Either way, the connection is closed. When writing events or registering an event schema, the error is wrapped in a `ClientError::OutcomeUnknown` error once the write was handed to the connection, since it may have been stored nonetheless, see [Handling Errors](#handling-errors). A stall while the connection is being established leaves the write certainly not stored, so it stays a `ClientError::ConnectionStalled` error.
 
 *Note that the stall timeout needs a Tokio runtime with the time driver enabled, which `#[tokio::main]` and `enable_all()` include. If you build the runtime yourself, call `enable_time()`, or every request panics.*
 
@@ -108,7 +108,7 @@ match client.write_events(events, preconditions).await {
 
 EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored nonetheless. If writing events or registering an event schema fails in a way that leaves open whether it was stored, the function returns a `ClientError::OutcomeUnknown` error, which wraps the error the write failed with, for example after the connection stalled or broke, or if the server answered with status `500`. Before you repeat such a write, check whether it was stored, for example by reading the events.
 
-A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, or if the server refused the write, for example since a precondition does not hold.
+A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, also if establishing it stalled, or if the server refused the write, for example since a precondition does not hold.
 
 #### Aborting a Request
 
