@@ -629,6 +629,8 @@ let container  = Container::start_default().await.unwrap();
 let client = container.get_client().await.unwrap();
 ```
 
+*Note that starting the container waits up to 60 seconds for EventSourcingDB to answer, which can not be changed, and then fails. If the container exits before, for example because of an invalid configuration, starting it fails at once with an error that names the exit code and the last lines of the output of the container.*
+
 #### Configuring the Container Instance
 
 By default, `Container` uses the `latest` tag of the official EventSourcingDB Docker image. To change that use the provided builder and call the `with_image_tag` function.

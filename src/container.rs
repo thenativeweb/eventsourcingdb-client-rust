@@ -135,10 +135,11 @@ impl ContainerBuilder {
     /// This call will transform the builder into a running container.
     /// It takes care of starting the container and waiting for it to be ready by waiting for the
     /// [ping](https://docs.eventsourcingdb.io/reference/api-overview/#authentication)
-    /// endpoint to respond since that doesn't require authentication.
+    /// endpoint to respond since that doesn't require authentication. It waits up to 60 seconds.
     ///
     /// # Errors
-    /// This function will return an error if the container could not be started.
+    /// This function will return an error if the container could not be started, if EventSourcingDB does not answer
+    /// within 60 seconds, and at once if the container exits before, naming its exit code and its last output.
     pub async fn start(self) -> Result<Container, ContainerError> {
         let http_port = self.internal_port.as_u16().to_string();
         let mut cmd_args = vec![
