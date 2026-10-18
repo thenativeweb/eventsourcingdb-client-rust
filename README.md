@@ -64,6 +64,8 @@ let client = Client::builder(base_url, api_token)
   .build();
 ```
 
+*Note that the stall timeout must be greater than zero, since it can not be turned off. `stall_timeout` panics if you pass `Duration::ZERO`.*
+
 If the server stalls while the stream of `observe_events` or `run_eventql_query` is running, the stream returns a `ClientError::HeartbeatTimeout` error. Every other request and stream, as well as waiting for the response of `observe_events` and `run_eventql_query`, fails with a `ClientError::IoError` error whose kind is `std::io::ErrorKind::TimedOut`. Either way, the connection is closed, and a stream ends.
 
 ### Writing Events

@@ -85,8 +85,15 @@ impl ClientBuilder {
     /// end with [`ClientError::HeartbeatTimeout`]. Every other request, and every other stream, fails with a
     /// [`ClientError::IoError`] whose kind is [`std::io::ErrorKind::TimedOut`], and so does waiting for the response
     /// of [`Client::observe_events`] and [`Client::run_eventql_query`]. The connection is closed then.
+    ///
+    /// # Panics
+    /// Panics if the stall timeout is zero, since there is no stall timeout that is turned off.
     #[must_use]
     pub fn stall_timeout(mut self, stall_timeout: Duration) -> Self {
+        assert!(
+            !stall_timeout.is_zero(),
+            "The stall timeout must be greater than zero"
+        );
         self.stall_timeout = stall_timeout;
         self
     }

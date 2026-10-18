@@ -398,6 +398,13 @@ async fn assert_stalls<T: std::fmt::Debug>(request: impl Future<Output = Result<
 
 fn assert_send_and_unpin<T: Send + Unpin>(_: &T) {}
 
+#[test]
+#[should_panic(expected = "The stall timeout must be greater than zero")]
+fn stall_timeout_rejects_zero() {
+    let _ = Client::builder("http://localhost:3000/".parse().unwrap(), "secret")
+        .stall_timeout(Duration::ZERO);
+}
+
 #[tokio::test]
 async fn every_request_fails_once_no_response_arrives() {
     let candidate = EventCandidate::builder()
