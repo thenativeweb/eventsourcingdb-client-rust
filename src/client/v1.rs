@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use super::{
-    http::{Http, is_from_eventsourcingdb, stream_ended_unexpectedly},
+    http::{Answer, Http, is_from_eventsourcingdb, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -250,15 +250,16 @@ fn end_after_failure<T>(
 /// Sends the request, and returns the response once its head arrived and it reports success.
 ///
 /// # Errors
-/// Returns [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, and a [`DbApiError`]
-/// with the status and the text of the response, and the code of the v2 API that clearly matches, if the response
-/// does not report success.
+/// Returns a [`DbApiError`] with the status and the text of the response if it does not report success, with the code
+/// of the v2 API that clearly matches if it is from EventSourcingDB, and [`ClientError::InvalidServerHeader`] if the
+/// response is not from EventSourcingDB, but reports success, or answers a request for a stream.
 async fn send<R: ClientRequest>(
     http: &Http,
     endpoint: &R,
+    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let request = build(http, endpoint)?;
-    send_request(http, endpoint, request).await
+    send_request(http, endpoint, request, answer).await
 }
 
 /// Builds the request, which sends nothing yet.
@@ -272,18 +273,28 @@ async fn send_request<R: ClientRequest>(
     http: &Http,
     endpoint: &R,
     request: reqwest::Request,
+    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let response = http.send(request).await?;
+    let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
 
-    if !is_from_eventsourcingdb(&response) {
-        return Err(ClientError::InvalidServerHeader);
-    }
     if response.status().is_success() {
-        return Ok(response);
+        return if is_from_eventsourcingdb {
+            Ok(response)
+        } else {
+            Err(ClientError::InvalidServerHeader)
+        };
+    }
+    if !is_from_eventsourcingdb && answer == Answer::Stream {
+        return Err(ClientError::InvalidServerHeader);
     }
 
     let status = response.status();
     let error = http.transport_error(response).await;
+    // Only an answer of EventSourcingDB tells which error it is.
+    if !error.is_from_eventsourcingdb {
+        return Err(error.into());
+    }
     Err(
         match code_of_v1_error(endpoint.url_path(), status, &error.description) {
             Some(code) => error.with_code(code),
@@ -308,7 +319,7 @@ async fn read_oneshot<R: OneShotRequest>(
     endpoint: &R,
     request: reqwest::Request,
 ) -> Result<R::Response, ClientError> {
-    let response = send_request(http, endpoint, request).await?;
+    let response = send_request(http, endpoint, request, Answer::Single).await?;
     let result = http.read_json(response).await?;
     endpoint.validate_response(&result)?;
     Ok(result)
@@ -339,7 +350,7 @@ async fn request_streaming<R: StreamingRequest>(
     http: &Http,
     endpoint: R,
 ) -> Result<BoxStream<'static, Result<R::ItemType, ClientError>>, ClientError> {
-    let response = send(http, &endpoint).await?;
+    let response = send(http, &endpoint, Answer::Stream).await?;
     Ok(R::build_stream(http, response))
 }
 

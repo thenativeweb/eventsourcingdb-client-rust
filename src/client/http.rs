@@ -14,6 +14,15 @@ use url::Url;
 use super::stall_timeout;
 use crate::error::{ClientError, DbApiError};
 
+/// What a request expects as its answer, which decides how an error answer that is not from EventSourcingDB is
+/// reported: for a single answer as a [`DbApiError`] with its status and text, and for a stream as
+/// [`ClientError::InvalidServerHeader`], as before the v2 API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Single,
+    Stream,
+}
+
 /// The HTTP method `QUERY` (RFC 10008), which the v2 API reads with
 pub fn query() -> Method {
     Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method")
@@ -87,8 +96,14 @@ impl Http {
     pub async fn transport_error(&self, response: Response) -> DbApiError {
         let status = response.status();
         let retry_after = retry_after(&response);
+        let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
         let text = self.read_text(response).await;
-        DbApiError::from_status(status, &text, retry_after)
+        let error = DbApiError::from_status(status, &text, retry_after);
+        if is_from_eventsourcingdb {
+            error
+        } else {
+            error.not_from_eventsourcingdb()
+        }
     }
 
     /// Splits the body of the response into lines, ending with [`ClientError::ConnectionStalled`] once nothing

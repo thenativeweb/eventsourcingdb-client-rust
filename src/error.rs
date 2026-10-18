@@ -84,7 +84,9 @@ impl From<std::io::Error> for ClientError {
 /// An error that the DB reported.
 ///
 /// This is every error that comes from the DB itself: an error the DB answers with a status other than `200`, and an
-/// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer.
+/// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer. A
+/// request that expects a single answer reports an error answer that is not from the DB, such as one of a proxy in
+/// front of it, the same way, with its status and text and without a code.
 ///
 /// ```
 /// use eventsourcingdb::error::{ClientError, code};
@@ -118,6 +120,9 @@ pub struct DbApiError {
     /// `429`, which it sends once there are too many requests. It is `None` for every other status, and if the
     /// header is missing.
     pub retry_after: Option<Duration>,
+    /// Whether the answer is from EventSourcingDB, which names itself in the `Server` header. An error answer of a
+    /// proxy in front of it, for example, is not, so it tells nothing about whether a write was stored.
+    pub(crate) is_from_eventsourcingdb: bool,
 }
 
 impl DbApiError {
@@ -137,7 +142,14 @@ impl DbApiError {
             } else {
                 None
             },
+            is_from_eventsourcingdb: true,
         }
+    }
+
+    /// Marks the error as one of an answer that is not from EventSourcingDB.
+    pub(crate) fn not_from_eventsourcingdb(mut self) -> Self {
+        self.is_from_eventsourcingdb = false;
+        self
     }
 
     /// Sets the code of the error.

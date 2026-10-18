@@ -79,6 +79,12 @@ async fn a_failed_probe_is_not_remembered_and_the_next_request_probes_again() {
         body: "404 page not found".to_string(),
         is_from_eventsourcingdb: false,
     };
+    let not_from_eventsourcingdb_success = Reply::Text {
+        status: 200,
+        headers: vec![],
+        body: Api::V2.ping_answer(),
+        is_from_eventsourcingdb: false,
+    };
     let no_json = Reply::Text {
         status: 200,
         headers: vec![],
@@ -100,7 +106,11 @@ async fn a_failed_probe_is_not_remembered_and_the_next_request_probes_again() {
             Reply::text(401, "unauthorized\n"),
             |error| matches!(error, ClientError::DbApiError(error) if error.status == 401),
         ),
-        (not_from_eventsourcingdb, |error| {
+        (
+            not_from_eventsourcingdb,
+            |error| matches!(error, ClientError::DbApiError(error) if error.status == 404 && error.code.is_empty()),
+        ),
+        (not_from_eventsourcingdb_success, |error| {
             matches!(error, ClientError::InvalidServerHeader)
         }),
         (

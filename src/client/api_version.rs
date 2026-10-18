@@ -21,7 +21,8 @@ pub enum ApiVersion {
 /// Finds out whether the server offers the v2 API, by pinging it through the v2 API.
 ///
 /// The server offers the v2 API if it answers with status `200` and an envelope of the v2 API. It does not if it
-/// answers with status `404` or `405`, as EventSourcingDB 1.2.0 answers every path of the v2 API.
+/// answers with status `404` or `405`, as EventSourcingDB 1.2.0 answers every path of the v2 API. Only answers of
+/// EventSourcingDB count, which names itself in the `Server` header.
 ///
 /// # Errors
 /// Returns the error of the request if it fails, and an error for every other answer, such as one with status `5xx`,
@@ -30,10 +31,9 @@ pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
     let request = http.request(Method::GET, v2::PING_PATH, None::<&()>)?;
     let response = http.send(request).await?;
 
-    if !is_from_eventsourcingdb(&response) {
-        return Err(ClientError::InvalidServerHeader);
-    }
+    let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
     match response.status() {
+        StatusCode::OK if !is_from_eventsourcingdb => Err(ClientError::InvalidServerHeader),
         StatusCode::OK => {
             let envelope: v2::Envelope = http.read_json(response).await?;
             if v2::is_event_envelope(&envelope) {
@@ -45,7 +45,7 @@ pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
                 )))
             }
         }
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED if is_from_eventsourcingdb => {
             // Reading the body lets the connection carry the next request.
             let _ = http.read_text(response).await;
             Ok(ApiVersion::V1)
