@@ -33,9 +33,18 @@ async fn start_server_with_probes(probes: Vec<Reply>, api: Api) -> TestServer {
 
 #[tokio::test]
 async fn the_first_request_finds_out_the_api_version_which_the_client_remembers() {
+    // A proxy that only forwards the v1 API answers with its own 404, without the Server header of EventSourcingDB.
+    let proxy_answer = |status: u16| Reply::Text {
+        status,
+        headers: vec![("Server", "nginx")],
+        body: "not found".to_string(),
+        is_from_eventsourcingdb: false,
+    };
     let cases = [
         (Reply::text(404, "404 page not found\n"), Api::V1),
         (Reply::text(405, "Method Not Allowed\n"), Api::V1),
+        (proxy_answer(404), Api::V1),
+        (proxy_answer(405), Api::V1),
         (probe_reply(Api::V2), Api::V2),
     ];
     for (probe, api) in cases {
@@ -74,9 +83,9 @@ type IsExpectedError = fn(&ClientError) -> bool;
 #[tokio::test]
 async fn a_failed_probe_is_not_remembered_and_the_next_request_probes_again() {
     let not_from_eventsourcingdb = Reply::Text {
-        status: 404,
+        status: 502,
         headers: vec![],
-        body: "404 page not found".to_string(),
+        body: "bad gateway".to_string(),
         is_from_eventsourcingdb: false,
     };
     let not_from_eventsourcingdb_success = Reply::Text {
@@ -108,7 +117,7 @@ async fn a_failed_probe_is_not_remembered_and_the_next_request_probes_again() {
         ),
         (
             not_from_eventsourcingdb,
-            |error| matches!(error, ClientError::DbApiError(error) if error.status == 404 && error.code.is_empty()),
+            |error| matches!(error, ClientError::DbApiError(error) if error.status == 502 && error.code.is_empty()),
         ),
         (not_from_eventsourcingdb_success, |error| {
             matches!(error, ClientError::InvalidServerHeader)
