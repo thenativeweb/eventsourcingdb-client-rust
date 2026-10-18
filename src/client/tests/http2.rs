@@ -1,6 +1,7 @@
 //! The tests of writes over HTTP/2, whose streams a server may refuse without processing them.
 
 use std::{
+    future::poll_fn,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -10,11 +11,7 @@ use std::{
 
 use bytes::Bytes;
 use serde_json::json;
-use tokio::{
-    net::TcpListener,
-    sync::OnceCell,
-    time::{sleep, timeout},
-};
+use tokio::{net::TcpListener, sync::OnceCell, time::timeout};
 
 use super::{Api, Client, GUARD_TIMEOUT, STALL_TIMEOUT, event_data, test_candidate};
 use crate::{
@@ -27,6 +24,36 @@ use crate::{
 struct Http2Server {
     base_url: url::Url,
     streams: Arc<AtomicUsize>,
+}
+
+/// The size of the flow-control windows of the client, which is the smallest HTTP/2 allows
+const WINDOW: usize = 65_535;
+
+/// Sends the body until it fills the window of the stream, and resets the stream once the client grants more
+/// capacity, which it does only once it read some of the body. So the client has read the head of the answer for sure
+/// before the reset arrives, whatever the timing.
+async fn reset_once_the_client_reads_the_body(
+    mut stream: h2::SendStream<Bytes>,
+    padding: Bytes,
+    reason: h2::Reason,
+) {
+    let mut sent = 0;
+    stream.reserve_capacity(WINDOW + 1);
+    while let Some(Ok(capacity)) = poll_fn(|context| stream.poll_capacity(context)).await {
+        if sent == WINDOW {
+            // The window was full, so this capacity comes from the client, which read some of the body.
+            stream.send_reset(reason);
+            return;
+        }
+        let length = capacity.min(WINDOW - sent);
+        if stream
+            .send_data(padding.slice(sent..sent + length), false)
+            .is_err()
+        {
+            return;
+        }
+        sent += length;
+    }
 }
 
 /// When the server refuses a stream
@@ -65,11 +92,18 @@ impl Http2Server {
             }
         };
 
+        // The start of a body that fills the window of the stream, and does not end before it
+        let padding = Bytes::from(match api {
+            Api::V1 => format!("[{}", " ".repeat(WINDOW - 1)),
+            Api::V2 => format!("{}\n", api.heartbeat()).repeat(WINDOW)[..WINDOW].to_string(),
+        });
+
         let counted_streams = streams.clone();
         drop(tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let streams = counted_streams.clone();
                 let body = body.clone();
+                let padding = padding.clone();
                 drop(tokio::spawn(async move {
                     let Ok(mut connection) = h2::server::handshake(socket).await else {
                         return;
@@ -87,11 +121,12 @@ impl Http2Server {
                             .expect("Failed to build the response");
                         if let Ok(mut stream) = respond.send_response(response, false) {
                             if is_refused {
-                                // The connection sends the head only while it is driven, so the reset follows
-                                // in a task of its own, once the head has long arrived.
+                                // The connection sends frames only while it is driven, so the stream is reset in
+                                // a task of its own.
+                                let padding = padding.clone();
                                 drop(tokio::spawn(async move {
-                                    sleep(Duration::from_millis(200)).await;
-                                    stream.send_reset(reason);
+                                    reset_once_the_client_reads_the_body(stream, padding, reason)
+                                        .await;
                                 }));
                             } else {
                                 let _ = stream.send_data(Bytes::from(body.clone()), true);
@@ -121,8 +156,11 @@ impl Http2Server {
         api_version: ApiVersion,
         stall_timeout: Duration,
     ) -> Client {
+        let window = u32::try_from(WINDOW).expect("The window fits into u32");
         let reqwest = reqwest::Client::builder()
             .http2_prior_knowledge()
+            .http2_initial_stream_window_size(window)
+            .http2_initial_connection_window_size(window)
             .build()
             .expect("Failed to build the client of reqwest");
         Client {
@@ -240,7 +278,7 @@ async fn a_write_whose_stream_the_server_refuses_after_the_head_of_its_answer_ha
             Refusal::AfterHead,
         )
         .await;
-        // The stall timeout is longer than the server waits after the head of its answer.
+        // Nothing stalls the client while the server waits for it to read the body.
         let client = server.client_with_stall_timeout(api_version, GUARD_TIMEOUT);
 
         let error = timeout(
