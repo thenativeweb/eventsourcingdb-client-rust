@@ -498,7 +498,7 @@ match result {
 
 ### Verifying an Event's Hash
 
-To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an error:
+To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an `EventError::HashVerificationFailed` error:
 
 ```rust
 let result = event.verify_hash();
@@ -508,13 +508,15 @@ match result {
 }
 ```
 
+*Note that the hash tells its version: a hash that starts with `esdb:hash:v2:` is of version 2, a hash without such a prefix is of version 1. EventSourcingDB writes version 2 since version 1.3, and events written before keep their hash of version 1. `verify_hash` supports both. If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, the function returns an `EventError::HashVerificationFailed` error as well, with an empty `actual` hash and a message that names the version.*
+
 *Note that this only verifies the hash. If you also want to verify the signature, you can skip this step and call `verify_signature` directly, which performs a hash verification internally.*
 
 ### Verifying an Event's Signature
 
 To verify the authenticity of an event, call the `verify_signature` function on the event instance. This requires the public key that matches the private key used for signing on the server.
 
-The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error:
+The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error: the errors of `verify_hash` for the hash, `EventError::MissingSignature` if the event has no signature, `EventError::MalformedSignature` if the signature can not be decoded, and `EventError::SignatureError` if the signature is invalid:
 
 ```rust
 use ed25519_dalek::VerifyingKey;

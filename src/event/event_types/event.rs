@@ -13,6 +13,50 @@ use crate::{
 use cloudevents::EventBuilder;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+mod tests;
+
+/// The prefix every hash of version 2 starts with
+const HASH_V2_PREFIX: &str = "esdb:hash:v2:";
+
+/// The version of an event hash, as the prefix of the hash names it
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HashVersion<'a> {
+    /// A hash without a prefix
+    V1,
+    /// A hash that starts with `esdb:hash:v2:`
+    V2,
+    /// A hash whose prefix names a version the SDK does not support, such as `v3` for `esdb:hash:v3:…`
+    Unsupported(&'a str),
+}
+
+impl<'a> HashVersion<'a> {
+    /// Determines the version of the given hash from its prefix.
+    pub(crate) fn of(hash: &'a str) -> Self {
+        match hash
+            .strip_prefix("esdb:hash:")
+            .and_then(|versioned_hash| versioned_hash.split_once(':'))
+        {
+            None => Self::V1,
+            Some(("v2", _)) => Self::V2,
+            Some((version, _)) => Self::Unsupported(version),
+        }
+    }
+}
+
+/// This is a helper to convert a `DateTime<Utc>` to an RFC3339 string with trimmed trailing zeros in the fractional seconds part,
+/// since the hash is calculated based on such a string representation of the time and this matches the Go version.
+fn to_rfc3339_trimmed(dt: DateTime<Utc>) -> String {
+    let nanos = format!("{:09}", dt.timestamp_subsec_nanos());
+    let frac = nanos.trim_end_matches('0');
+
+    if frac.is_empty() {
+        dt.format("%Y-%m-%dT%H:%M:%S").to_string() + "Z"
+    } else {
+        format!("{}.{}Z", dt.format("%Y-%m-%dT%H:%M:%S"), frac)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CustomValue {
     raw: Box<RawValue>,
@@ -147,6 +191,10 @@ impl Event {
 
     /// Verify the hash of an event.
     ///
+    /// The hash tells its version: a hash that starts with `esdb:hash:v2:` is of version 2, a hash without such a
+    /// prefix is of version 1. EventSourcingDB writes version 2 since version 1.3, and events written before keep
+    /// their hash of version 1, so both are supported.
+    ///
     /// ```
     /// use eventsourcingdb::event::EventCandidate;
     /// # use serde_json::json;
@@ -172,21 +220,33 @@ impl Event {
     /// ```
     ///
     /// # Errors
-    /// Returns an error if the hash verification fails.
+    /// Returns [`EventError::HashVerificationFailed`] if the hash is invalid.
+    /// If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, it returns the same error with an
+    /// empty `actual` hash, and the message of the error names the version.
     pub fn verify_hash(&self) -> Result<(), EventError> {
-        /// This is a helper to convert a `DateTime<Utc>` to an RFC3339 string with trimmed trailing zeros in the fractional seconds part,
-        /// since the hash is calculated based on such a string representation of the time and this matches the Go version.
-        fn to_rfc3339_trimmed(dt: DateTime<Utc>) -> String {
-            let nanos = format!("{:09}", dt.timestamp_subsec_nanos());
-            let frac = nanos.trim_end_matches('0');
-
-            if frac.is_empty() {
-                dt.format("%Y-%m-%dT%H:%M:%S").to_string() + "Z"
-            } else {
-                format!("{}.{}Z", dt.format("%Y-%m-%dT%H:%M:%S"), frac)
+        let actual = match HashVersion::of(&self.hash) {
+            HashVersion::V1 => self.compute_hash_v1(),
+            HashVersion::V2 => self.compute_hash_v2(),
+            HashVersion::Unsupported(_) => {
+                return Err(EventError::HashVerificationFailed {
+                    expected: self.hash.clone(),
+                    actual: String::new(),
+                });
             }
-        }
+        };
 
+        if actual == self.hash {
+            Ok(())
+        } else {
+            Err(EventError::HashVerificationFailed {
+                expected: self.hash.clone(),
+                actual,
+            })
+        }
+    }
+
+    /// Computes the hash of version 1, which has no prefix and does not cover `traceparent` and `tracestate`.
+    fn compute_hash_v1(&self) -> String {
         let metadata = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
             self.specversion,
@@ -207,16 +267,33 @@ impl Event {
 
         let final_hash_input = format!("{metadata_hash_hex}{data_hash_hex}");
         let final_hash = Sha256::digest(final_hash_input.as_bytes());
-        let final_hash_hex = hex::encode(final_hash);
+        hex::encode(final_hash)
+    }
 
-        if final_hash_hex == self.hash {
-            Ok(())
-        } else {
-            Err(EventError::HashVerificationFailed {
-                expected: self.hash.clone(),
-                actual: final_hash_hex,
-            })
-        }
+    /// Computes the hash of version 2, which writes the prefix and every field on a line of its own, a missing field
+    /// as `-`, and `data` exactly as it arrived.
+    fn compute_hash_v2(&self) -> String {
+        const MISSING_FIELD: &str = "-";
+
+        let time = to_rfc3339_trimmed(self.time);
+        let hash_input = [
+            HASH_V2_PREFIX,
+            self.specversion.as_str(),
+            self.id.as_str(),
+            self.predecessorhash.as_str(),
+            time.as_str(),
+            self.source.as_str(),
+            self.subject.as_str(),
+            self.ty.as_str(),
+            self.datacontenttype.as_str(),
+            self.traceparent().unwrap_or(MISSING_FIELD),
+            self.tracestate().unwrap_or(MISSING_FIELD),
+            self.data.raw.get(),
+        ]
+        .join("\n");
+
+        let hash = Sha256::digest(hash_input.as_bytes());
+        format!("{HASH_V2_PREFIX}{}", hex::encode(hash))
     }
 
     /// Verify the signature of an event.
