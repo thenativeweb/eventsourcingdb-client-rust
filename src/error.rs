@@ -1,6 +1,8 @@
 //! This module contains all error types of the SDK.
 
 pub mod code;
+#[cfg(test)]
+mod tests;
 
 use std::time::Duration;
 
@@ -16,7 +18,7 @@ use crate::client::stall_timeout::is_stalled;
 pub enum ClientError {
     /// An IO Error occurred
     #[error("An IO error occurred: {0}")]
-    IoError(std::io::Error),
+    IoError(#[source] std::io::Error),
     /// The provided request method is invalid
     #[error("The provided request method is invalid")]
     InvalidRequestMethod,
