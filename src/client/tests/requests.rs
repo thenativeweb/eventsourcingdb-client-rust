@@ -282,3 +282,28 @@ async fn read_subjects_sends_the_recursive_option_through_the_v2_api() {
         );
     }
 }
+
+#[tokio::test]
+async fn read_subjects_through_the_v1_api_compares_the_subject_as_the_server_normalizes_it() {
+    let cases = [
+        ("/a/b/", vec!["/a/b", "/a/b/c"], vec!["/a/b"]),
+        ("a/b", vec!["/a/b", "/a/b/c"], vec!["/a/b"]),
+        ("/", vec!["/", "/a", "/a/b"], vec!["/"]),
+    ];
+    for (subject, read_subjects, expected) in cases {
+        let lines: Vec<_> = read_subjects
+            .iter()
+            .map(|read_subject| Api::V1.subject(read_subject))
+            .collect();
+        let server = start_server(Api::V1, Reply::lines(&lines)).await;
+        let client = create_client(&server);
+        let subjects: Vec<String> = client
+            .read_subjects(subject, ReadSubjectsOptions { recursive: false })
+            .await
+            .expect("Failed to read subjects")
+            .try_collect()
+            .await
+            .expect("Failed to read subjects");
+        assert_eq!(subjects, expected, "Unexpected subjects for {subject}");
+    }
+}

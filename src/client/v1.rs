@@ -441,8 +441,9 @@ pub async fn read_subjects(
     .map_ok(|payload| payload.subject);
 
     // The v1 API always reads the subjects below the subject as well, so the subject alone is what remains after
-    // leaving them out.
-    let subject = subject.to_string();
+    // leaving them out. The server reads the subject as `/` followed by it without leading and trailing slashes, so
+    // that is what it is compared with.
+    let subject = format!("/{}", subject.trim_matches('/'));
     Ok(subjects
         .try_filter(move |read_subject| {
             future::ready(options.recursive || *read_subject == subject)
