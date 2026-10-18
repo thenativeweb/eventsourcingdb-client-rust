@@ -126,6 +126,10 @@ pub struct DbApiError {
 }
 
 // Debug and PartialEq leave out whether the error is from EventSourcingDB, which only the SDK itself uses.
+#[allow(
+    clippy::missing_fields_in_debug,
+    reason = "Whether the error is from EventSourcingDB is internal to the SDK"
+)]
 impl fmt::Debug for DbApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DbApiError")
