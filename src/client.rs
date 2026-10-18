@@ -3,7 +3,8 @@
 //! To use the client, create it with the base URL and API token of your [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 //! ```
 //! # tokio_test::block_on(async {
-//! # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+//! # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+//! # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
 //! let db_url = "http://localhost:3000/";
 //! let api_token = "secrettoken";
 //! # let db_url = container.get_base_url().await.unwrap();
@@ -20,6 +21,7 @@
 mod client_request;
 mod precondition;
 pub mod request_options;
+mod stall_timeout;
 #[cfg(test)]
 mod tests;
 
@@ -40,16 +42,76 @@ use reqwest;
 use std::time::Duration;
 use url::Url;
 
-/// How long a stream with heartbeats waits for the next line before it ends with [`ClientError::HeartbeatTimeout`]
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a request waits for anything to arrive from the server by default before it fails
+const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
+///
+/// Create it with [`Client::new`], or with [`Client::builder`] to configure it, for example with
+/// [`ClientBuilder::stall_timeout`].
+///
+/// The client needs a Tokio runtime with the time driver enabled, since every request runs with the stall timeout.
+/// `#[tokio::main]` and [`enable_all`](tokio::runtime::Builder::enable_all) include it; if you build the runtime
+/// yourself, call [`enable_time`](tokio::runtime::Builder::enable_time), or every request panics.
 #[derive(Debug)]
 pub struct Client {
     base_url: Url,
     api_token: String,
     reqwest: reqwest::Client,
-    heartbeat_timeout: Duration,
+    stall_timeout: Duration,
+}
+
+/// Builder for a [`Client`], which you create with [`Client::builder`].
+///
+/// ```
+/// # use std::time::Duration;
+/// # use eventsourcingdb::client::Client;
+/// let client = Client::builder("http://localhost:3000/".parse().unwrap(), "secret")
+///     .stall_timeout(Duration::from_secs(10))
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ClientBuilder {
+    base_url: Url,
+    api_token: String,
+    stall_timeout: Duration,
+}
+
+impl ClientBuilder {
+    /// Sets how long a request waits for anything to arrive from the server before it fails, which is 30 seconds by
+    /// default.
+    ///
+    /// The stall timeout covers a request from sending it until its end, including connecting and waiting for the
+    /// response. Everything that arrives restarts it: every part of a response, every event, row, and heartbeat. It
+    /// is not a total duration, so a long stream that keeps receiving events or heartbeats is never cut off.
+    ///
+    /// Once the stall timeout elapses, the streams of [`Client::observe_events`] and [`Client::run_eventql_query`]
+    /// end with [`ClientError::HeartbeatTimeout`]. Every other request, and every other stream, fails with a
+    /// [`ClientError::IoError`] whose kind is [`std::io::ErrorKind::TimedOut`], and so does waiting for the response
+    /// of [`Client::observe_events`] and [`Client::run_eventql_query`]. The connection is closed then.
+    ///
+    /// # Panics
+    /// Panics if the stall timeout is zero, since there is no stall timeout that is turned off.
+    #[must_use]
+    pub fn stall_timeout(mut self, stall_timeout: Duration) -> Self {
+        assert!(
+            !stall_timeout.is_zero(),
+            "The stall timeout must be greater than zero"
+        );
+        self.stall_timeout = stall_timeout;
+        self
+    }
+
+    /// Creates the client.
+    #[must_use]
+    pub fn build(self) -> Client {
+        Client {
+            base_url: self.base_url,
+            api_token: self.api_token,
+            reqwest: reqwest::Client::new(),
+            stall_timeout: self.stall_timeout,
+        }
+    }
 }
 
 impl Client {
@@ -68,11 +130,25 @@ impl Client {
 
     /// Creates a new client instance based on the base URL and API token
     pub fn new(base_url: Url, api_token: impl Into<String>) -> Self {
-        Client {
+        Self::builder(base_url, api_token).build()
+    }
+
+    /// Creates a builder for a client instance based on the base URL and API token, which lets you configure the
+    /// client before you build it.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use eventsourcingdb::client::Client;
+    /// let client = Client::builder("http://localhost:3000/".parse().unwrap(), "secret")
+    ///     .stall_timeout(Duration::from_secs(10))
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn builder(base_url: Url, api_token: impl Into<String>) -> ClientBuilder {
+        ClientBuilder {
             base_url,
             api_token: api_token.into(),
-            reqwest: reqwest::Client::new(),
-            heartbeat_timeout: HEARTBEAT_TIMEOUT,
+            stall_timeout: DEFAULT_STALL_TIMEOUT,
         }
     }
 
@@ -143,17 +219,18 @@ impl Client {
         &self,
         endpoint: R,
     ) -> Result<R::Response, ClientError> {
-        let response = self.build_request(&endpoint)?.send().await?;
+        let response =
+            stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
 
         if response.status().is_success() {
             Self::validate_server_headers(&response)?;
-            let result = response.json().await?;
+            let result = stall_timeout::read_json(response, self.stall_timeout).await?;
             endpoint.validate_response(&result)?;
             Ok(result)
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
-                response.text().await.unwrap_or_default(),
+                stall_timeout::read_text(response, self.stall_timeout).await,
             ))
         }
     }
@@ -168,14 +245,15 @@ impl Client {
         &self,
         endpoint: R,
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
-        let response = self.build_request(&endpoint)?.send().await?;
+        let response =
+            stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
         Self::validate_server_headers(&response)?;
         if response.status().is_success() {
-            Ok(R::build_stream(response, self.heartbeat_timeout))
+            Ok(R::build_stream(response, self.stall_timeout))
         } else {
             Err(ClientError::DBApiError(
                 response.status(),
-                response.text().await.unwrap_or_default(),
+                stall_timeout::read_text(response, self.stall_timeout).await,
             ))
         }
     }
@@ -184,7 +262,8 @@ impl Client {
     ///
     /// ```
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -208,7 +287,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -241,7 +321,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -284,7 +365,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -312,7 +394,8 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither an event nor a heartbeat arrives for 30 seconds.
+    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither an event nor a heartbeat arrives for the stall
+    /// timeout, see [`ClientBuilder::stall_timeout`].
     pub async fn observe_events<'a>(
         &self,
         subject: &'a str,
@@ -328,7 +411,8 @@ impl Client {
     ///
     /// ```
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -352,7 +436,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -392,7 +477,8 @@ impl Client {
     /// ```
     /// use futures::StreamExt;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -409,7 +495,8 @@ impl Client {
     /// ```
     /// use futures::StreamExt;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -443,7 +530,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -471,7 +559,8 @@ impl Client {
     /// use eventsourcingdb::event::EventCandidate;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -510,7 +599,8 @@ impl Client {
     /// use futures::StreamExt;
     /// # use serde_json::json;
     /// # tokio_test::block_on(async {
-    /// # let container = eventsourcingdb::container::Container::start_preview().await.unwrap();
+    /// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+    /// # let container = eventsourcingdb::container::Container::builder().with_image_tag(&image_tag).start().await.unwrap();
     /// let db_url = "http://localhost:3000/";
     /// let api_token = "secrettoken";
     /// # let db_url = container.get_base_url().await.unwrap();
@@ -526,7 +616,8 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither a row nor a heartbeat arrives for 30 seconds.
+    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither a row nor a heartbeat arrives for the stall
+    /// timeout, see [`ClientBuilder::stall_timeout`].
     pub async fn run_eventql_query(
         &self,
         query: &str,

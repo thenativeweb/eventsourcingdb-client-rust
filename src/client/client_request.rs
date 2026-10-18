@@ -23,10 +23,10 @@ use serde_json::value::RawValue;
 pub use verify_api_token::VerifyApiTokenRequest;
 pub use write_events::WriteEventsRequest;
 
+use super::stall_timeout::{end_on_stall, is_stalled};
 use crate::error::ClientError;
 use futures::{
     Stream,
-    future::Either,
     stream::{self, StreamExt, TryStreamExt},
 };
 use futures_util::io;
@@ -34,10 +34,7 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    time::timeout,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
 use tokio_util::io::StreamReader;
 
@@ -88,17 +85,14 @@ pub trait StreamingRequest: ClientRequest {
     /// Whether the database sends heartbeats on this stream
     const HAS_HEARTBEATS: bool = false;
 
+    /// Builds the stream of items, which ends with an error once nothing arrived for the stall timeout: with
+    /// [`ClientError::HeartbeatTimeout`] if the database sends heartbeats on it, with [`ClientError::IoError`] otherwise.
     fn build_stream(
         response: reqwest::Response,
-        heartbeat_timeout: Duration,
+        stall_timeout: Duration,
     ) -> impl Stream<Item = Result<Self::ItemType, ClientError>> {
-        let lines = Self::lines_stream(response);
-        let lines = if Self::HAS_HEARTBEATS {
-            Either::Left(end_on_heartbeat_timeout(lines, heartbeat_timeout))
-        } else {
-            Either::Right(lines)
-        };
-        Box::pin(
+        let lines = Self::lines_stream(response, stall_timeout);
+        Box::pin(end_after_stall(
             lines
                 .map(|line| Ok(serde_json::from_str::<StreamLineItem>(line?.as_str())?))
                 .filter_map(|o| async {
@@ -123,33 +117,43 @@ pub trait StreamingRequest: ClientRequest {
                         Err(e) => Some(Err(e)),
                     }
                 }),
-        )
+        ))
     }
 
+    /// Splits the body of the response into lines.
+    /// Every chunk of the body, which may be a part of a line, restarts the stall timeout.
     fn lines_stream(
         response: reqwest::Response,
+        stall_timeout: Duration,
     ) -> impl Stream<Item = Result<String, ClientError>> {
         let bytes = response
             .bytes_stream()
             .map_err(|err| io::Error::other(format!("Failed to read response stream: {err}")));
-        let stream_reader = StreamReader::new(bytes);
-        LinesStream::new(BufReader::new(stream_reader).lines()).map_err(ClientError::from)
+        let stream_reader = StreamReader::new(end_on_stall(bytes, stall_timeout));
+        LinesStream::new(BufReader::new(stream_reader).lines()).map_err(|error| {
+            if Self::HAS_HEARTBEATS && is_stalled(&error) {
+                ClientError::HeartbeatTimeout
+            } else {
+                ClientError::from(error)
+            }
+        })
     }
 }
 
-/// Ends a stream of lines with [`ClientError::HeartbeatTimeout`] if no line arrives within the heartbeat timeout.
-/// Every line, including a heartbeat, restarts the timeout.
-/// When the timeout elapses, the lines are dropped, which closes the underlying response.
-fn end_on_heartbeat_timeout(
-    lines: impl Stream<Item = Result<String, ClientError>>,
-    heartbeat_timeout: Duration,
-) -> impl Stream<Item = Result<String, ClientError>> {
-    stream::unfold(Some(Box::pin(lines)), move |lines| async move {
-        let mut lines = lines?;
-        match timeout(heartbeat_timeout, lines.next()).await {
-            Ok(line) => line.map(|line| (line, Some(lines))),
-            Err(_) => Some((Err(ClientError::HeartbeatTimeout), None)),
-        }
+/// Ends a stream of items after the error that reports a stall, so that a line that arrived only partly is not read.
+/// The items are dropped then, which closes the underlying response.
+fn end_after_stall<T>(
+    items: impl Stream<Item = Result<T, ClientError>>,
+) -> impl Stream<Item = Result<T, ClientError>> {
+    stream::unfold(Some(Box::pin(items)), |items| async move {
+        let mut items = items?;
+        let item = items.next().await?;
+        let has_stalled = match &item {
+            Err(ClientError::HeartbeatTimeout) => true,
+            Err(ClientError::IoError(error)) => is_stalled(error),
+            _ => false,
+        };
+        Some((item, (!has_stalled).then_some(items)))
     })
     .fuse()
 }

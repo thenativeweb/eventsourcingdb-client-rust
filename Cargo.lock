@@ -987,6 +987,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "http",
  "jsonschema",
  "polars",
  "rand",

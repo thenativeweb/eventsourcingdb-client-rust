@@ -341,9 +341,9 @@ async fn all_event_fields_are_present() {
         .unwrap();
     assert_eq!(data_content_type, "application/json");
 
-    // Check hash is present (64 char hex string)
+    // Check hash
     let hash = df.column("hash").unwrap().str().unwrap().get(0).unwrap();
-    assert_eq!(hash.len(), 64);
+    assert_eq!(hash, events[0].hash());
 
     // Check predecessor_hash is present
     let predecessor_hash = df
@@ -353,5 +353,5 @@ async fn all_event_fields_are_present() {
         .unwrap()
         .get(0)
         .unwrap();
-    assert_eq!(predecessor_hash.len(), 64);
+    assert_eq!(predecessor_hash, events[0].predecessorhash());
 }

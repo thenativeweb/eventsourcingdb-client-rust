@@ -1,5 +1,5 @@
 mod utils;
-use eventsourcingdb::{Event, container::Container};
+use eventsourcingdb::Event;
 use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use tokio_test::assert_err;
@@ -229,6 +229,28 @@ async fn verify_event_hash() {
 }
 
 #[tokio::test]
+async fn verify_event_hashes_of_written_and_read_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let written = client
+        .write_events(utils::create_eventcandidates_with_trace_info(), vec![])
+        .await
+        .expect("Unable to write events");
+    let read: Vec<Event> = client
+        .read_events("/test", None)
+        .await
+        .expect("Failed to read events")
+        .try_collect()
+        .await
+        .expect("Failed to read events");
+
+    assert_eq!(read, written);
+    for event in written.iter().chain(&read) {
+        event.verify_hash().expect("Hash verification failed");
+    }
+}
+
+#[tokio::test]
 async fn verify_broken_event_hash() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
@@ -249,8 +271,7 @@ async fn verify_broken_event_hash() {
 
 #[tokio::test]
 async fn verify_event_signature() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -269,9 +290,37 @@ async fn verify_event_signature() {
 }
 
 #[tokio::test]
+async fn verify_event_signatures_of_written_and_read_events() {
+    let container = utils::create_test_container_builder()
+        .with_signing_key()
+        .start()
+        .await
+        .expect("Failed to start test container");
+    let verification_key = container.get_verification_key().unwrap();
+    let client = container.get_client().await.unwrap();
+    let written = client
+        .write_events(utils::create_eventcandidates_with_trace_info(), vec![])
+        .await
+        .expect("Unable to write events");
+    let read: Vec<Event> = client
+        .read_events("/test", None)
+        .await
+        .expect("Failed to read events")
+        .try_collect()
+        .await
+        .expect("Failed to read events");
+
+    assert_eq!(read.len(), written.len());
+    for event in written.iter().chain(&read) {
+        event
+            .verify_signature(verification_key)
+            .expect("Signature verification failed");
+    }
+}
+
+#[tokio::test]
 async fn verify_event_signature_with_broken_signature() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -297,8 +346,7 @@ async fn verify_event_signature_with_broken_signature() {
 
 #[tokio::test]
 async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .with_signing_key()
         .start()
         .await
@@ -312,8 +360,7 @@ async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
 
 #[tokio::test]
 async fn get_signing_key_returns_none_without_a_signing_key() {
-    let container = Container::builder()
-        .with_image_tag("preview")
+    let container = utils::create_test_container_builder()
         .start()
         .await
         .expect("Failed to start test container");
