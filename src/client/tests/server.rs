@@ -1,11 +1,11 @@
 //! A local HTTP server that stands in for EventSourcingDB in the tests.
 
-use std::{sync::Arc, time::Duration};
+use std::{fmt::Write, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
-    sync::mpsc,
+    sync::{mpsc, watch},
     time::{sleep, timeout},
 };
 use url::Url;
@@ -41,6 +41,8 @@ pub enum Reply {
     },
     /// Closes the connection without answering
     Close,
+    /// Waits until the gate is open, and then answers as the inner reply says
+    Gated(watch::Receiver<bool>, Box<Reply>),
 }
 
 impl Reply {
@@ -57,6 +59,16 @@ impl Reply {
     /// An answer with status 200 and the given lines, each one ending with a line break, which ends the body
     pub fn lines(lines: &[String]) -> Self {
         Self::Complete(
+            lines
+                .iter()
+                .map(|line| (Duration::ZERO, format!("{line}\n")))
+                .collect(),
+        )
+    }
+
+    /// An answer with status 200 and the given lines, each one ending with a line break, which keeps the body open
+    pub fn open_lines(lines: &[String]) -> Self {
+        Self::Open(
             lines
                 .iter()
                 .map(|line| (Duration::ZERO, format!("{line}\n")))
@@ -198,6 +210,10 @@ async fn send_reply(socket: &mut TcpStream, reply: Reply) -> AfterReply {
             let _ = socket.shutdown().await;
             return AfterReply::Closed;
         }
+        Reply::Gated(mut gate, reply) => {
+            let _ = gate.wait_for(|is_open| *is_open).await;
+            return Box::pin(send_reply(socket, *reply)).await;
+        }
         Reply::Text {
             status,
             headers,
@@ -210,7 +226,7 @@ async fn send_reply(socket: &mut TcpStream, reply: Reply) -> AfterReply {
                 head.push_str("Server: EventSourcingDB/test\r\n");
             }
             for (name, value) in headers {
-                head.push_str(&format!("{name}: {value}\r\n"));
+                let _ = write!(head, "{name}: {value}\r\n");
             }
             let answer = format!("{head}Content-Length: {}\r\n\r\n{body}", body.len());
             return if socket.write_all(answer.as_bytes()).await.is_ok() {

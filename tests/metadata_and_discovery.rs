@@ -1,5 +1,9 @@
 mod utils;
-use eventsourcingdb::{Event, request_options::ReadSubjectsOptions};
+use eventsourcingdb::{
+    Event,
+    error::{ClientError, code},
+    request_options::ReadSubjectsOptions,
+};
 use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use tokio_test::assert_err;
@@ -432,4 +436,37 @@ async fn get_signing_key_returns_none_without_a_signing_key() {
         .await
         .expect("Failed to start test container");
     assert!(container.get_signing_key().is_none());
+}
+
+#[tokio::test]
+async fn reading_an_unknown_event_type_is_reported_with_its_code() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let result = client.read_event_type("io.eventsourcingdb.unknown").await;
+    assert!(
+        matches!(&result, Err(ClientError::DbApiError(error)) if error.code == code::EVENT_TYPE_UNKNOWN),
+        "Expected an unknown event type, but got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn registering_an_event_schema_twice_is_reported_with_its_code() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let schema = json!({
+        "type": "object",
+        "properties": { "value": { "type": "number" } },
+    });
+    client
+        .register_event_schema("io.eventsourcingdb.test", &schema)
+        .await
+        .expect("Failed to register event schema");
+
+    let result = client
+        .register_event_schema("io.eventsourcingdb.test", &schema)
+        .await;
+    assert!(
+        matches!(&result, Err(ClientError::DbApiError(error)) if error.code == code::EVENT_SCHEMA_ALREADY_REGISTERED),
+        "Expected an event schema that is already registered, but got: {result:?}"
+    );
 }

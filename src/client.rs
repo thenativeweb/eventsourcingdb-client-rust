@@ -18,61 +18,54 @@
 //! With the code above you can verify that the DB is reachable and that the API token is valid.
 //! If this works, it means that the client is correctly configured and you can use it to make requests to the DB.
 
-mod client_request;
+mod api_version;
+mod http;
 mod precondition;
 pub mod request_options;
 pub(crate) mod stall_timeout;
 #[cfg(test)]
 mod tests;
+mod v1;
+mod v2;
 
 use crate::{
-    client::client_request::{ReadEventTypeRequest, code_of_v1_error},
-    error::{ClientError, DbApiError},
+    error::ClientError,
     event::{Event, EventCandidate, ManagementEvent},
     request_options::EventType,
 };
-use client_request::{
-    ClientRequest, ObserveEventsRequest, OneShotRequest, PingRequest, ReadEventTypesRequest,
-    ReadEventsRequest, ReadSubjectsRequest, RegisterEventSchemaRequest, RunEventqlQueryRequest,
-    StreamingRequest, VerifyApiTokenRequest, WriteEventsRequest,
-};
-use futures::{Stream, TryStreamExt, future};
+use api_version::ApiVersion;
+use futures::Stream;
+use http::Http;
 pub use precondition::Precondition;
-use reqwest;
 use std::time::Duration;
+use tokio::sync::OnceCell;
 use url::Url;
 
 /// How long a request waits for anything to arrive from the server by default before it fails
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Reads how long to wait before trying again from the `Retry-After` header of the response, which names it in
-/// seconds.
-fn retry_after(response: &reqwest::Response) -> Option<Duration> {
-    response
-        .headers()
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
-        .map(Duration::from_secs)
-}
-
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 ///
 /// Create it with [`Client::new`], or with [`Client::builder`] to configure it, for example with
-/// [`ClientBuilder::stall_timeout`].
+/// [`ClientBuilder::stall_timeout`]. Creating a client sends no request.
+///
+/// The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks
+/// the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the
+/// v1 API if not. It remembers the answer, so it asks only once. If asking fails, for example since the server is
+/// not reachable, the first request fails with that error, and the next request asks again.
+///
+/// The v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of the server has to let it
+/// through.
 ///
 /// The client needs a Tokio runtime with the time driver enabled, since every request runs with the stall timeout.
 /// `#[tokio::main]` and [`enable_all`](tokio::runtime::Builder::enable_all) include it; if you build the runtime
 /// yourself, call [`enable_time`](tokio::runtime::Builder::enable_time), or every request panics.
+///
+/// To abort a request, drop its future, or the stream it returned.
 #[derive(Debug)]
 pub struct Client {
-    base_url: Url,
-    api_token: String,
-    reqwest: reqwest::Client,
-    stall_timeout: Duration,
+    http: Http,
+    api_version: OnceCell<ApiVersion>,
 }
 
 /// Builder for a [`Client`], which you create with [`Client::builder`].
@@ -118,28 +111,13 @@ impl ClientBuilder {
     #[must_use]
     pub fn build(self) -> Client {
         Client {
-            base_url: self.base_url,
-            api_token: self.api_token,
-            reqwest: reqwest::Client::new(),
-            stall_timeout: self.stall_timeout,
+            http: Http::new(self.base_url, self.api_token, self.stall_timeout),
+            api_version: OnceCell::new(),
         }
     }
 }
 
 impl Client {
-    /// Validates that the server header starts with "EventSourcingDB/"
-    fn validate_server_headers(response: &reqwest::Response) -> Result<(), ClientError> {
-        match response
-            .headers()
-            .get("Server")
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.starts_with("EventSourcingDB/"))
-        {
-            Some(true) => Ok(()),
-            _ => Err(ClientError::InvalidServerHeader),
-        }
-    }
-
     /// Creates a new client instance based on the base URL and API token
     pub fn new(base_url: Url, api_token: impl Into<String>) -> Self {
         Self::builder(base_url, api_token).build()
@@ -174,7 +152,7 @@ impl Client {
     /// ```
     #[must_use]
     pub fn get_base_url(&self) -> &Url {
-        &self.base_url
+        &self.http.base_url
     }
 
     /// Get the API token of the client to use for API calls
@@ -187,100 +165,21 @@ impl Client {
     /// ```
     #[must_use]
     pub fn get_api_token(&self) -> &str {
-        &self.api_token
+        &self.http.api_token
     }
 
-    /// Utility function to request an endpoint of the API.
+    /// Returns the version of the API that the server offers, which the first request of the client finds out.
     ///
-    /// This function will return a [`reqwest::RequestBuilder`] which can be used to send the request.
-    ///
-    /// # Errors
-    /// This function will return an error if the request fails or if the URL is invalid.
-    fn build_request<R: ClientRequest>(
-        &self,
-        endpoint: &R,
-    ) -> Result<reqwest::RequestBuilder, ClientError> {
-        let url = self
-            .base_url
-            .join(endpoint.url_path())
-            .map_err(ClientError::URLParseError)?;
-
-        let request = match endpoint.method() {
-            reqwest::Method::GET => self.reqwest.get(url),
-            reqwest::Method::POST => self.reqwest.post(url),
-            _ => return Err(ClientError::InvalidRequestMethod),
-        }
-        .bearer_auth(&self.api_token);
-        let request = if let Some(body) = endpoint.body() {
-            request
-                .header("Content-Type", "application/json")
-                .json(&body?)
-        } else {
-            request
-        };
-        Ok(request)
-    }
-
-    /// Utility function to request an endpoint of the API as a oneshot.
-    ///
-    /// This means, that the response is not streamed, but returned as a single value.
+    /// Concurrent first requests wait for the same answer. Only an answer that tells the version is remembered, so
+    /// after an error, the next request asks again.
     ///
     /// # Errors
-    /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request_oneshot<R: OneShotRequest>(
-        &self,
-        endpoint: R,
-    ) -> Result<R::Response, ClientError> {
-        let response =
-            stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
-        let response = self.check_response(endpoint.url_path(), response).await?;
-
-        let result = stall_timeout::read_json(response, self.stall_timeout).await?;
-        endpoint.validate_response(&result)?;
-        Ok(result)
-    }
-
-    /// Utility function to request an endpoint of the API as a stream.
-    ///
-    /// This means, that the response is streamed and returned as a stream of values.
-    ///
-    /// # Errors
-    /// This function will return an error if the request fails or if the URL is invalid.
-    async fn request_streaming<R: StreamingRequest>(
-        &self,
-        endpoint: R,
-    ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
-        let response =
-            stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
-        let response = self.check_response(endpoint.url_path(), response).await?;
-
-        Ok(R::build_stream(response, self.stall_timeout))
-    }
-
-    /// Checks that the response is from EventSourcingDB, and that it reports success, and returns it if so.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, and a
-    /// [`DbApiError`] with the status and the text of the response if it does not report success.
-    async fn check_response(
-        &self,
-        url_path: &str,
-        response: reqwest::Response,
-    ) -> Result<reqwest::Response, ClientError> {
-        Self::validate_server_headers(&response)?;
-        if response.status().is_success() {
-            return Ok(response);
-        }
-
-        let status = response.status();
-        let retry_after = retry_after(&response);
-        let text = stall_timeout::read_text(response, self.stall_timeout).await;
-        let error = DbApiError::from_status(status, &text, retry_after);
-        Err(match code_of_v1_error(url_path, status, &text) {
-            Some(code) => error.with_code(code),
-            None => error,
-        }
-        .into())
+    /// Returns the error that finding out the version failed with.
+    async fn api_version(&self) -> Result<ApiVersion, ClientError> {
+        self.api_version
+            .get_or_try_init(|| api_version::probe(&self.http))
+            .await
+            .copied()
     }
 
     /// Pings the DB instance to check if it is reachable.
@@ -301,8 +200,10 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let _ = self.request_oneshot(PingRequest).await?;
-        Ok(())
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::ping(&self.http).await,
+            ApiVersion::V2 => v2::ping(&self.http).await,
+        }
     }
 
     /// Reads events from the DB instance.
@@ -333,10 +234,10 @@ impl Client {
         subject: &'a str,
         options: Option<request_options::ReadEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
-        let response = self
-            .request_streaming(ReadEventsRequest { subject, options })
-            .await?;
-        Ok(response)
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::read_events(&self.http, subject, options).await,
+            ApiVersion::V2 => v2::read_events(&self.http, subject, options).await,
+        }
     }
 
     /// Reads a specific event type from the DB instance.
@@ -375,12 +276,10 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn read_event_type(&self, event_type: &str) -> Result<EventType, ClientError> {
-        let response = self
-            .request_oneshot(ReadEventTypeRequest {
-                event_type: event_type.to_string(),
-            })
-            .await?;
-        Ok(response.into())
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::read_event_type(&self.http, event_type).await,
+            ApiVersion::V2 => v2::read_event_type(&self.http, event_type).await,
+        }
     }
 
     /// Observe events from the DB instance.
@@ -426,10 +325,10 @@ impl Client {
         subject: &'a str,
         options: Option<request_options::ObserveEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
-        let response = self
-            .request_streaming(ObserveEventsRequest { subject, options })
-            .await?;
-        Ok(response)
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::observe_events(&self.http, subject, options).await,
+            ApiVersion::V2 => v2::observe_events(&self.http, subject, options).await,
+        }
     }
 
     /// Verifies the API token by sending a request to the DB instance.
@@ -450,8 +349,10 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
-        let _ = self.request_oneshot(VerifyApiTokenRequest).await?;
-        Ok(())
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::verify_api_token(&self.http).await,
+            ApiVersion::V2 => v2::verify_api_token(&self.http).await,
+        }
     }
 
     /// Registers an event schema with the DB instance.
@@ -492,8 +393,15 @@ impl Client {
         event_type: &str,
         schema: &serde_json::Value,
     ) -> Result<ManagementEvent, ClientError> {
-        self.request_oneshot(RegisterEventSchemaRequest::try_new(event_type, schema)?)
-            .await
+        if event_type.is_empty() {
+            return Err(ClientError::InvalidEventType);
+        }
+        jsonschema::meta::validate(schema).map_err(|_| ClientError::JsonSchemaError)?;
+
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::register_event_schema(&self.http, event_type, schema).await,
+            ApiVersion::V2 => v2::register_event_schema(&self.http, event_type, schema).await,
+        }
     }
 
     /// Reads the subjects in the DB instance, the given subject alone or together with all subjects below it.
@@ -550,19 +458,10 @@ impl Client {
         subject: &str,
         options: request_options::ReadSubjectsOptions,
     ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
-        let subjects = self
-            .request_streaming(ReadSubjectsRequest {
-                base_subject: subject,
-            })
-            .await?
-            .map_ok(|payload| payload.subject);
-
-        // The v1 API always reads the subjects below the subject as well, so the subject alone is what remains
-        // after leaving them out.
-        let subject = subject.to_string();
-        Ok(subjects.try_filter(move |read_subject| {
-            future::ready(options.recursive || *read_subject == subject)
-        }))
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::read_subjects(&self.http, subject, options).await,
+            ApiVersion::V2 => v2::read_subjects(&self.http, subject, options).await,
+        }
     }
 
     /// Reads all event types in the DB instance.
@@ -591,8 +490,10 @@ impl Client {
     pub async fn read_event_types(
         &self,
     ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
-        let event_types = self.request_streaming(ReadEventTypesRequest).await?;
-        Ok(event_types.map_ok(EventType::from))
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::read_event_types(&self.http).await,
+            ApiVersion::V2 => v2::read_event_types(&self.http).await,
+        }
     }
 
     /// Writes events to the DB instance.
@@ -627,11 +528,10 @@ impl Client {
         events: Vec<EventCandidate>,
         preconditions: Vec<Precondition>,
     ) -> Result<Vec<Event>, ClientError> {
-        self.request_oneshot(WriteEventsRequest {
-            events,
-            preconditions,
-        })
-        .await
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::write_events(&self.http, events, preconditions).await,
+            ApiVersion::V2 => v2::write_events(&self.http, &events, &preconditions).await,
+        }
     }
 
     /// Run an eventql query against the DB.
@@ -664,9 +564,9 @@ impl Client {
         &self,
         query: &str,
     ) -> Result<impl Stream<Item = Result<serde_json::Value, ClientError>>, ClientError> {
-        let response = self
-            .request_streaming(RunEventqlQueryRequest { query })
-            .await?;
-        Ok(response)
+        match self.api_version().await? {
+            ApiVersion::V1 => v1::run_eventql_query(&self.http, query).await,
+            ApiVersion::V2 => v2::run_eventql_query(&self.http, query).await,
+        }
     }
 }

@@ -9,18 +9,8 @@ use super::{ClientRequest, OneShotRequest};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterEventSchemaRequest<'a> {
-    event_type: &'a str,
-    schema: &'a Value,
-}
-
-impl<'a> RegisterEventSchemaRequest<'a> {
-    pub fn try_new(event_type: &'a str, schema: &'a Value) -> Result<Self, ClientError> {
-        if event_type.is_empty() {
-            return Err(ClientError::InvalidEventType);
-        }
-        jsonschema::meta::validate(schema).map_err(|_e| ClientError::JsonSchemaError)?;
-        Ok(Self { event_type, schema })
-    }
+    pub event_type: &'a str,
+    pub schema: &'a Value,
 }
 
 impl ClientRequest for RegisterEventSchemaRequest<'_> {

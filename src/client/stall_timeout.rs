@@ -8,7 +8,7 @@
 use std::{error::Error, fmt, io, time::Duration};
 
 use futures::{Stream, StreamExt, stream};
-use reqwest::{RequestBuilder, Response};
+use reqwest::Response;
 use serde::de::DeserializeOwned;
 use tokio::time::timeout;
 
@@ -46,10 +46,10 @@ pub fn is_stalled(error: &io::Error) -> bool {
 
 /// Sends the request and waits for the head of the response, failing once nothing arrived for the stall timeout.
 pub async fn send(
-    request: RequestBuilder,
+    sending: impl Future<Output = reqwest::Result<Response>>,
     stall_timeout: Duration,
 ) -> Result<Response, ClientError> {
-    timeout(stall_timeout, request.send())
+    timeout(stall_timeout, sending)
         .await
         .map_err(|_| stalled(stall_timeout))?
         .map_err(ClientError::from)
