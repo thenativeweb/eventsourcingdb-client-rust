@@ -20,6 +20,7 @@
 
 mod api_version;
 mod http;
+mod outcome;
 mod precondition;
 pub mod request_options;
 pub(crate) mod stall_timeout;

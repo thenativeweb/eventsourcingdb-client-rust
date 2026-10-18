@@ -11,7 +11,10 @@ use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value, value::RawValue};
 
-use super::http::{Http, is_from_eventsourcingdb, query};
+use super::{
+    http::{Http, is_from_eventsourcingdb, query},
+    outcome,
+};
 use crate::{
     client::{
         Precondition,
@@ -19,7 +22,7 @@ use crate::{
             EventType, ObserveEventsOptions, ReadEventsOptions, ReadSubjectsOptions,
         },
     },
-    error::{ClientError, DbApiError},
+    error::{ClientError, DbApiError, code},
     event::{Event, EventCandidate, ManagementEvent},
 };
 
@@ -160,6 +163,14 @@ async fn send<T: Serialize + ?Sized>(
     body: Option<&T>,
 ) -> Result<reqwest::Response, ClientError> {
     let request = http.request(method, path, body)?;
+    send_request(http, request).await
+}
+
+/// Sends the request that was built already, and checks the response as [`send`] does.
+async fn send_request(
+    http: &Http,
+    request: reqwest::Request,
+) -> Result<reqwest::Response, ClientError> {
     let response = http.send(request).await?;
 
     if !is_from_eventsourcingdb(&response) {
@@ -284,10 +295,32 @@ pub async fn write_events(
         events,
         preconditions,
     };
-    let response = send(http, Method::POST, "/api/v2/data/write-events", Some(&body)).await?;
-    request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
-        .try_collect()
-        .await
+    let request = http.request(Method::POST, "/api/v2/data/write-events", Some(&body))?;
+
+    let writing = async {
+        let response = send_request(http, request).await?;
+        request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
+            .try_collect()
+            .await
+    };
+    outcome::of_write(writing.await, is_refusal)
+}
+
+/// Tells whether the server refused a write through the v2 API before storing anything, which it does with every
+/// error of the domain except `store-failed`, and with the status `400`, `401`, `408`, `413`, `429`, and `503`.
+fn is_refusal(error: &DbApiError) -> bool {
+    if error.status == StatusCode::OK {
+        return error.code != code::STORE_FAILED;
+    }
+    matches!(
+        error.status,
+        StatusCode::BAD_REQUEST
+            | StatusCode::UNAUTHORIZED
+            | StatusCode::REQUEST_TIMEOUT
+            | StatusCode::PAYLOAD_TOO_LARGE
+            | StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::SERVICE_UNAVAILABLE
+    )
 }
 
 pub async fn register_event_schema(
@@ -299,24 +332,29 @@ pub async fn register_event_schema(
         ty: event_type,
         schema,
     };
-    let response = send(
-        http,
+    let request = http.request(
         Method::POST,
         "/api/v2/data/register-event-schema",
         Some(&body),
-    )
-    .await?;
-    let mut events: Vec<ManagementEvent> =
-        request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
-            .try_collect()
-            .await?;
+    )?;
 
-    match (events.pop(), events.is_empty()) {
-        (Some(event), true) if event.ty() == "io.eventsourcingdb.api.event-schema-registered" => {
-            Ok(event)
+    let registering = async {
+        let response = send_request(http, request).await?;
+        let mut events: Vec<ManagementEvent> =
+            request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
+                .try_collect()
+                .await?;
+
+        match (events.pop(), events.is_empty()) {
+            (Some(event), true)
+                if event.ty() == "io.eventsourcingdb.api.event-schema-registered" =>
+            {
+                Ok(event)
+            }
+            _ => Err(ClientError::InvalidEventType),
         }
-        _ => Err(ClientError::InvalidEventType),
-    }
+    };
+    outcome::of_write(registering.await, is_refusal)
 }
 
 pub async fn read_event_type(http: &Http, event_type: &str) -> Result<EventType, ClientError> {

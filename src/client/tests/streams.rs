@@ -119,10 +119,14 @@ async fn a_v2_stream_that_breaks_off_before_its_end_item_fails() {
     );
     assert!(is_ended_without_end(&event_types[0]));
 
-    // Writing events fails the same way.
+    // Writing events fails the same way, and may have been stored nonetheless.
     let server = start_server(Api::V2, Reply::lines(&[Api::V2.heartbeat()])).await;
     let client = create_client(&server);
-    let result = client.write_events(vec![test_candidate()], vec![]).await;
+    let result = client.write_events(vec![test_candidate()], vec![]);
+    let result = match result.await {
+        Err(ClientError::OutcomeUnknown(cause)) => Err::<(), _>(*cause),
+        result => panic!("Expected an unknown outcome, but got {result:?}"),
+    };
     assert!(
         is_ended_without_end(&result),
         "Expected an error, but got {result:?}"

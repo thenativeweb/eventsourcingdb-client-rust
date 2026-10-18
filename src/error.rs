@@ -59,6 +59,15 @@ pub enum ClientError {
     /// [`crate::client::ClientBuilder::stall_timeout`]
     #[error("The connection stalled, since nothing arrived from the server for the stall timeout")]
     ConnectionStalled,
+    /// Writing events or registering an event schema failed in a way that leaves open whether the DB stored it
+    /// nonetheless, so repeating it may store it twice. It wraps the error the write failed with.
+    ///
+    /// EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored, for
+    /// example after [`ClientError::ConnectionStalled`], a connection that broke after it was established, a stream
+    /// that ended before its end item, or an answer with status `500`. A write fails with its error itself only if it
+    /// was certainly not stored: if the connection could not be established at all, or if the DB refused the write.
+    #[error("The outcome of the write is unknown, so it may have been stored: {0}")]
+    OutcomeUnknown(#[source] Box<ClientError>),
 }
 
 impl From<std::io::Error> for ClientError {

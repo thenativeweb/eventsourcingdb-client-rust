@@ -49,6 +49,14 @@ async fn assert_stream_stalls<T: std::fmt::Debug>(
 
 fn assert_send_and_unpin<T: Send + Unpin>(_: &T) {}
 
+/// Returns the cause of the unknown outcome of a write, since a stalled write may have been stored.
+fn outcome_unknown_cause(error: ClientError) -> ClientError {
+    match error {
+        ClientError::OutcomeUnknown(cause) => *cause,
+        error => panic!("Expected an unknown outcome, but got {error:?}"),
+    }
+}
+
 #[test]
 #[should_panic(expected = "The stall timeout must be greater than zero")]
 fn stall_timeout_rejects_zero() {
@@ -71,11 +79,20 @@ async fn every_request_fails_once_no_response_arrives() {
         let (_server, client) = start_silent_server(api).await;
         assert_stalls(client.verify_api_token()).await;
         let (_server, client) = start_silent_server(api).await;
-        assert_stalls(client.write_events(vec![test_candidate()], vec![])).await;
+        assert_stalls(async {
+            client
+                .write_events(vec![test_candidate()], vec![])
+                .await
+                .map_err(outcome_unknown_cause)
+        })
+        .await;
         let (_server, client) = start_silent_server(api).await;
-        assert_stalls(
-            client.register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" })),
-        )
+        assert_stalls(async {
+            client
+                .register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" }))
+                .await
+                .map_err(outcome_unknown_cause)
+        })
         .await;
         let (_server, client) = start_silent_server(api).await;
         assert_stalls(client.read_event_type("io.eventsourcingdb.test")).await;

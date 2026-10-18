@@ -35,7 +35,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use super::http::{Http, is_from_eventsourcingdb};
+use super::{
+    http::{Http, is_from_eventsourcingdb},
+    outcome,
+};
 use crate::{
     client::{
         Precondition,
@@ -199,8 +202,22 @@ async fn send<R: ClientRequest>(
     http: &Http,
     endpoint: &R,
 ) -> Result<reqwest::Response, ClientError> {
+    let request = build(http, endpoint)?;
+    send_request(http, endpoint, request).await
+}
+
+/// Builds the request, which sends nothing yet.
+fn build<R: ClientRequest>(http: &Http, endpoint: &R) -> Result<reqwest::Request, ClientError> {
     let body = endpoint.body().transpose()?;
-    let request = http.request(endpoint.method(), endpoint.url_path(), body.as_ref())?;
+    http.request(endpoint.method(), endpoint.url_path(), body.as_ref())
+}
+
+/// Sends the request that was built for the endpoint, and checks the response as [`send`] does.
+async fn send_request<R: ClientRequest>(
+    http: &Http,
+    endpoint: &R,
+    request: reqwest::Request,
+) -> Result<reqwest::Response, ClientError> {
     let response = http.send(request).await?;
 
     if !is_from_eventsourcingdb(&response) {
@@ -226,10 +243,40 @@ async fn request_oneshot<R: OneShotRequest>(
     http: &Http,
     endpoint: R,
 ) -> Result<R::Response, ClientError> {
-    let response = send(http, &endpoint).await?;
+    let request = build(http, &endpoint)?;
+    read_oneshot(http, &endpoint, request).await
+}
+
+/// Sends the request that was built for the endpoint, and returns the single response.
+async fn read_oneshot<R: OneShotRequest>(
+    http: &Http,
+    endpoint: &R,
+    request: reqwest::Request,
+) -> Result<R::Response, ClientError> {
+    let response = send_request(http, endpoint, request).await?;
     let result = http.read_json(response).await?;
     endpoint.validate_response(&result)?;
     Ok(result)
+}
+
+/// Sends a write, which may have been stored unless it fails before it is sent, or the server refuses it, see
+/// [`outcome::of_write`].
+async fn request_write<R: OneShotRequest>(
+    http: &Http,
+    endpoint: R,
+) -> Result<R::Response, ClientError> {
+    let request = build(http, &endpoint)?;
+    outcome::of_write(read_oneshot(http, &endpoint, request).await, is_refusal)
+}
+
+/// Tells whether the server refused a write through the v1 API before storing anything, which it does with every
+/// status `4xx`, and with `503` and `507`.
+fn is_refusal(error: &DbApiError) -> bool {
+    error.status.is_client_error()
+        || matches!(
+            error.status,
+            StatusCode::SERVICE_UNAVAILABLE | StatusCode::INSUFFICIENT_STORAGE
+        )
 }
 
 /// Sends a request that expects a stream of responses, and returns the stream.
@@ -256,7 +303,7 @@ pub async fn write_events(
     events: Vec<EventCandidate>,
     preconditions: Vec<Precondition>,
 ) -> Result<Vec<Event>, ClientError> {
-    request_oneshot(
+    request_write(
         http,
         WriteEventsRequest {
             events,
@@ -271,7 +318,7 @@ pub async fn register_event_schema(
     event_type: &str,
     schema: &serde_json::Value,
 ) -> Result<ManagementEvent, ClientError> {
-    request_oneshot(http, RegisterEventSchemaRequest { event_type, schema }).await
+    request_write(http, RegisterEventSchemaRequest { event_type, schema }).await
 }
 
 pub async fn read_event_type(http: &Http, event_type: &str) -> Result<EventType, ClientError> {
