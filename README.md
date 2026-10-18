@@ -28,6 +28,12 @@ let api_token = "secret";
 let client = Client::new(base_url, api_token);
 ```
 
+Creating the client does not send any request.
+
+The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it asks only once. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again.
+
+*Note that the v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to let it through. There is no fallback to `POST`.*
+
 Then call the `ping` function to check whether the instance is reachable. If it is not, the function will return an error:
 
 ```rust
@@ -66,9 +72,47 @@ let client = Client::builder(base_url, api_token)
 
 *Note that the stall timeout must be greater than zero, since it can not be turned off. `stall_timeout` panics if you pass `Duration::ZERO`.*
 
-If the server stalls while the stream of `observe_events` or `run_eventql_query` is running, the stream returns a `ClientError::HeartbeatTimeout` error. Every other request and stream, as well as waiting for the response of `observe_events` and `run_eventql_query`, fails with a `ClientError::IoError` error whose kind is `std::io::ErrorKind::TimedOut`. Either way, the connection is closed, and a stream ends.
+Once the server stalls, the request fails with a `ClientError::ConnectionStalled` error, and a stream returns it and ends. Either way, the connection is closed. When writing events or registering an event schema, the error is wrapped in a `ClientError::OutcomeUnknown` error, since the write may have been stored nonetheless, see [Handling Errors](#handling-errors).
 
 *Note that the stall timeout needs a Tokio runtime with the time driver enabled, which `#[tokio::main]` and `enable_all()` include. If you build the runtime yourself, call `enable_time()`, or every request panics.*
+
+### Handling Errors
+
+Every error that the server reports is a `ClientError::DbApiError` error. Its `DbApiError` tells what went wrong:
+
+- `code` is the code of the error, the URL of the page that documents it, such as `https://docs.eventsourcingdb.io/errors/precondition-violated`, exactly as the server sends it. It is empty for an error without a code.
+- `description` describes the error.
+- `details` locate where the error occurred and name the offending value, as a JSON object, which is empty for an error without details.
+- `status` is the HTTP status of the answer, which is `200` for an error that the server sends in the body of an answer.
+- `retry_after` tells how long to wait before trying again, for an answer with status `429`, which the server sends once there are too many requests. The client never tries again on its own.
+
+The module `eventsourcingdb::error::code` has a constant for every code, so you can tell errors apart without comparing descriptions:
+
+```rust
+use eventsourcingdb::error::{ClientError, code};
+
+// ...
+
+match client.write_events(events, preconditions).await {
+  Ok(written_events) => // ...
+  Err(ClientError::DbApiError(error)) if error.code == code::PRECONDITION_VIOLATED => // ...
+  Err(err) => // ...
+}
+```
+
+*Note that servers without the v2 API report errors without codes. The client assigns the codes of the v2 API to those errors that clearly match one, such as a precondition that does not hold, and leaves the code of every other error empty.*
+
+#### Knowing Whether a Write Was Stored
+
+EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored nonetheless. If writing events or registering an event schema fails in a way that leaves open whether it was stored, the function returns a `ClientError::OutcomeUnknown` error, which wraps the error the write failed with, for example after the connection stalled or broke, or if the server answered with status `500`. Before you repeat such a write, check whether it was stored, for example by reading the events.
+
+A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, or if the server refused the write, for example since a precondition does not hold.
+
+#### Aborting a Request
+
+To abort a request, drop its future, or the stream it returned. This closes the connection.
+
+*Note that dropping the future of `write_events` or `register_event_schema` after the request was sent leaves open whether the write was stored, just as a `ClientError::OutcomeUnknown` error does.*
 
 ### Writing Events
 
@@ -303,7 +347,7 @@ match result {
 
 *Note that each row returned by the stream is of type `serde_json::Value` and matches the projection specified in your query.*
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
+*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::ConnectionStalled` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
 
 ### Converting Events to Polars DataFrame
 
@@ -381,7 +425,9 @@ match result {
 }
 ```
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
+*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::ConnectionStalled` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
+
+*Note that the server never ends observing on its own without an error, such as the one with the code `code::SERVER_SHUTTING_DOWN`. If it ends the stream without an error, the stream returns a `ClientError::IoError` error of the kind `std::io::ErrorKind::UnexpectedEof`, and ends.*
 
 #### Observing From Subjects Recursively
 
@@ -449,7 +495,7 @@ let result = client
 
 #### Aborting Observing
 
-The observe will automatically be canceled if the stream is dropped from scope.
+To stop observing, drop the stream, which closes the connection.
 
 ### Registering an Event Schema
 
@@ -475,39 +521,57 @@ client.register_event_schema(
 ).await;
 ```
 
-### Listing Subjects
+### Reading Subjects
 
-To list all subjects, call the `list_subjects` function with `/` as the base subject. The function returns a stream from which you can retrieve one subject at a time:
+To read subjects, call the `read_subjects` function with a subject and an options object, which decides with its `recursive` option whether the function returns the subject alone or together with all subjects below it. The option has no default, so you always have to set it. The function returns a stream from which you can retrieve one subject at a time.
+
+To read all subjects, provide `/` as the subject and set `recursive` to `true`:
 
 ```rust
-let result = client.list_subjects(Some("/")).await;
+use eventsourcingdb::request_options::ReadSubjectsOptions;
+
+// ...
+
+let result = client
+  .read_subjects("/", ReadSubjectsOptions { recursive: true })
+  .await;
 match result {
   Ok(subjects) => // ...
   Err(err) => // ...
 }
 ```
 
-If you only want to list subjects within a specific branch, provide the desired base subject instead:
+If you only want to read the subjects within a specific branch, provide the desired subject instead:
 
 ```rust
-let result = client.list_subjects("/books").await;
+let result = client
+  .read_subjects("/books", ReadSubjectsOptions { recursive: true })
+  .await;
 ```
 
-### Listing Event Types
-
-To list all event types, call the `list_event_types` function. The function returns a stream from which you can retrieve one event type at a time:
+To find out whether a subject exists, without reading the subjects below it, set `recursive` to `false`:
 
 ```rust
-let result = client.list_event_types().await;
+let result = client
+  .read_subjects("/books/42", ReadSubjectsOptions { recursive: false })
+  .await;
+```
+
+### Reading Event Types
+
+To read all event types, call the `read_event_types` function. The function returns a stream from which you can retrieve one event type at a time. Each event type has its name in `ty`, tells in `has_events` whether there are events of it, and has its `schema`, if one is registered:
+
+```rust
+let result = client.read_event_types().await;
 match result {
   Ok(event_types) => // ...
   Err(err) => // ...
 }
 ```
 
-### Listing a Specific Event Type
+### Reading a Specific Event Type
 
-To list a specific event type, call the `read_event_type` function. The function returns the detailed event type, which includes the schema:
+To read a specific event type, call the `read_event_type` function. The function returns the detailed event type, which includes the schema. If the event type is unknown, the function returns a `ClientError::DbApiError` error with the code `code::EVENT_TYPE_UNKNOWN`:
 
 ```rust
 let event_type_name = "io.eventsourcingdb.library.book-acquired";
@@ -530,7 +594,7 @@ match result {
 }
 ```
 
-*Note that the hash tells its version: a hash that starts with `esdb:hash:v2:` is of version 2, a hash without such a prefix is of version 1. EventSourcingDB writes version 2 since version 1.3, and events written before keep their hash of version 1. `verify_hash` supports both. If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, the function returns an `EventError::HashVerificationFailed` error as well, with an empty `actual` hash and a message that names the version.*
+*Note that the hash tells its version: a hash that starts with `esdb:hash:v2:` is of version 2, a hash without such a prefix is of version 1. EventSourcingDB writes version 2 since version 1.3, and events written before keep their hash of version 1. `verify_hash` supports both. If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, the function returns an `EventError::UnsupportedHashVersion` error, whose `version` names the version, such as `v3`.*
 
 *Note that this only verifies the hash. If you also want to verify the signature, you can skip this step and call `verify_signature` directly, which performs a hash verification internally.*
 
@@ -610,3 +674,101 @@ In case you need to set up the client yourself, use the following functions to g
 - `get_mapped_port()` returns the port
 - `get_base_url()` returns the full URL of the container
 - `get_api_token()` returns the API token
+
+## Upgrading From Version 2
+
+Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offer it, and the v1 API with all others, see [Getting Started](#getting-started). It changes the following:
+
+- `list_subjects` is now `read_subjects`, which takes the subject and an options object whose `recursive` option you have to set. Before, it read the subjects below the given base subject recursively, or below `/` for `None`:
+
+  ```rust
+  // Before
+  client.list_subjects(Some("/books")).await;
+  client.list_subjects(None).await;
+
+  // After
+  client.read_subjects("/books", ReadSubjectsOptions { recursive: true }).await;
+  client.read_subjects("/", ReadSubjectsOptions { recursive: true }).await;
+  ```
+
+- `list_event_types` is now `read_event_types`:
+
+  ```rust
+  // Before
+  client.list_event_types().await;
+
+  // After
+  client.read_event_types().await;
+  ```
+
+- `EventType` has its name in `ty` instead of `name`, and tells in `has_events` whether there are events of it, instead of in `is_phantom` whether there are none. As JSON, it is `{"type", "hasEvents", "schema"}` instead of `{"eventType", "isPhantom", "schema"}`:
+
+  ```rust
+  // Before
+  if !event_type.is_phantom { println!("{}", event_type.name); }
+
+  // After
+  if event_type.has_events { println!("{}", event_type.ty); }
+  ```
+
+- Every error that the server reports is a `ClientError::DbApiError` error with a `DbApiError`, which replaces `ClientError::DBApiError(status, text)` for an answer with an error status and `ClientError::DBError(payload)` for an error in a stream, see [Handling Errors](#handling-errors). An answer whose `Server` header does not name EventSourcingDB is a `ClientError::InvalidServerHeader` error, for an error status as well:
+
+  ```rust
+  // Before
+  Err(ClientError::DBApiError(status, text)) => // ...
+  Err(ClientError::DBError(payload)) => // ...
+
+  // After
+  Err(ClientError::DbApiError(error)) => // error.status, error.description, error.code, ...
+  ```
+
+- A stalled connection is a `ClientError::ConnectionStalled` error, for every request and stream. It replaces `ClientError::HeartbeatTimeout` on the streams of `observe_events` and `run_eventql_query`, and `ClientError::IoError` of the kind `std::io::ErrorKind::TimedOut` everywhere else:
+
+  ```rust
+  // Before
+  Err(ClientError::HeartbeatTimeout) => // ...
+  Err(ClientError::IoError(error)) if error.kind() == std::io::ErrorKind::TimedOut => // ...
+
+  // After
+  Err(ClientError::ConnectionStalled) => // ...
+  ```
+
+- `write_events` and `register_event_schema` return a `ClientError::OutcomeUnknown` error, which wraps the error they failed with, whenever the write may have been stored nonetheless, see [Knowing Whether a Write Was Stored](#knowing-whether-a-write-was-stored):
+
+  ```rust
+  // Before
+  Err(ClientError::HeartbeatTimeout) => // ...
+
+  // After
+  Err(ClientError::OutcomeUnknown(cause)) => // *cause is ClientError::ConnectionStalled, ...
+  ```
+
+- `verify_hash` and `verify_signature` return an `EventError::UnsupportedHashVersion` error for a hash of a version the SDK does not support, instead of an `EventError::HashVerificationFailed` error with an empty `actual` hash:
+
+  ```rust
+  // Before
+  Err(EventError::HashVerificationFailed { actual, .. }) if actual.is_empty() => // ...
+
+  // After
+  Err(EventError::UnsupportedHashVersion { version }) => // ...
+  ```
+
+- `ClientError`, `EventError`, and `ContainerError` are `#[non_exhaustive]`, so a `match` on them needs an arm for all other variants:
+
+  ```rust
+  // Before
+  match error {
+    ClientError::IoError(_) => // ...
+    // ... every other variant
+  }
+
+  // After
+  match error {
+    ClientError::IoError(_) => // ...
+    _ => // ...
+  }
+  ```
+
+- The stream of `observe_events` returns a `ClientError::IoError` error of the kind `std::io::ErrorKind::UnexpectedEof` if the server ends it without an error, instead of ending without one. A stream through the v1 API ends after an error that the server sends in it, as it does through the v2 API.
+
+- A proxy in front of EventSourcingDB has to let the HTTP method `QUERY` through, which the v2 API reads with.

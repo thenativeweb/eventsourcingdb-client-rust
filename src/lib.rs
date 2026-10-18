@@ -25,6 +25,10 @@
 //! let client = Client::new(base_url, api_token);
 //! ```
 //!
+//! The client works with servers that offer the v2 API, and with servers that do not, which it finds out on its first
+//! request. The v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to
+//! let it through.
+//!
 //! ## Examples
 //!
 //! Examples can be found in the [examples](https://github.com/thenativeweb/eventsourcingdb-client-rust/tree/main/examples) directory.
