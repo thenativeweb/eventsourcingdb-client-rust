@@ -48,6 +48,28 @@ if let Err(err) = result {
 }
 ```
 
+### Detecting Stalled Connections
+
+A request fails once nothing at all has arrived from the server for 30 seconds, from sending it until its end, including connecting and waiting for the response. Everything that arrives restarts the 30 seconds: every part of a response, every event, row, and heartbeat. This is not a total duration, so a long stream that keeps receiving events or heartbeats is never cut off.
+
+To use another duration, create the client with the `builder` function and call `stall_timeout`:
+
+```rust
+use std::time::Duration;
+
+// ...
+
+let client = Client::builder(base_url, api_token)
+  .stall_timeout(Duration::from_secs(10))
+  .build();
+```
+
+*Note that the stall timeout must be greater than zero, since it can not be turned off. `stall_timeout` panics if you pass `Duration::ZERO`.*
+
+If the server stalls while the stream of `observe_events` or `run_eventql_query` is running, the stream returns a `ClientError::HeartbeatTimeout` error. Every other request and stream, as well as waiting for the response of `observe_events` and `run_eventql_query`, fails with a `ClientError::IoError` error whose kind is `std::io::ErrorKind::TimedOut`. Either way, the connection is closed, and a stream ends.
+
+*Note that the stall timeout needs a Tokio runtime with the time driver enabled, which `#[tokio::main]` and `enable_all()` include. If you build the runtime yourself, call `enable_time()`, or every request panics.*
+
 ### Writing Events
 
 Call the `write_events` function and hand over a vector with one or more events. You do not have to provide all event fields – some are automatically added by the server.
@@ -281,7 +303,7 @@ match result {
 
 *Note that each row returned by the stream is of type `serde_json::Value` and matches the projection specified in your query.*
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
+*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
 
 ### Converting Events to Polars DataFrame
 
@@ -359,7 +381,7 @@ match result {
 }
 ```
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
+*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
 
 #### Observing From Subjects Recursively
 
@@ -498,7 +520,7 @@ match result {
 
 ### Verifying an Event's Hash
 
-To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an error:
+To verify the integrity of an event, call the `verify_hash` function on the event instance. This recomputes the event's hash locally and compares it to the hash stored in the event. If the hashes differ, the function returns an `EventError::HashVerificationFailed` error:
 
 ```rust
 let result = event.verify_hash();
@@ -508,13 +530,15 @@ match result {
 }
 ```
 
+*Note that the hash tells its version: a hash that starts with `esdb:hash:v2:` is of version 2, a hash without such a prefix is of version 1. EventSourcingDB writes version 2 since version 1.3, and events written before keep their hash of version 1. `verify_hash` supports both. If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, the function returns an `EventError::HashVerificationFailed` error as well, with an empty `actual` hash and a message that names the version.*
+
 *Note that this only verifies the hash. If you also want to verify the signature, you can skip this step and call `verify_signature` directly, which performs a hash verification internally.*
 
 ### Verifying an Event's Signature
 
 To verify the authenticity of an event, call the `verify_signature` function on the event instance. This requires the public key that matches the private key used for signing on the server.
 
-The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error:
+The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error: the errors of `verify_hash` for the hash, `EventError::MissingSignature` if the event has no signature, `EventError::MalformedSignature` if the signature can not be decoded, and `EventError::SignatureError` if the signature is invalid:
 
 ```rust
 use ed25519_dalek::VerifyingKey;

@@ -1,10 +1,22 @@
 use chrono::{TimeDelta, Utc};
-use eventsourcingdb::{Event, EventCandidate, container::Container};
+use eventsourcingdb::{
+    Event, EventCandidate, TraceInfo,
+    container::{Container, ContainerBuilder},
+};
 use serde_json::{Value, json};
+use std::env;
+
+/// The image tag the tests start EventSourcingDB with, taken from `EVENTSOURCINGDB_IMAGE_TAG`, and `preview` if it is not set
+fn image_tag() -> String {
+    env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string())
+}
+
+pub fn create_test_container_builder() -> ContainerBuilder {
+    Container::builder().with_image_tag(&image_tag())
+}
 
 pub async fn create_test_container() -> Container {
-    Container::builder()
-        .with_image_tag("preview")
+    create_test_container_builder()
         .start()
         .await
         .expect("Failed to start test container")
@@ -20,6 +32,29 @@ pub fn create_test_eventcandidate(
         .subject(subject.to_string())
         .ty("io.eventsourcingdb.test".to_string())
         .build()
+}
+
+/// Creates event candidates without trace information, with a `traceparent` and a `tracestate`, and with a
+/// `traceparent` only, since version 2 of the hash covers both and writes a missing one as `-`.
+pub fn create_eventcandidates_with_trace_info() -> Vec<EventCandidate> {
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string();
+    vec![
+        create_test_eventcandidate(
+            "/test",
+            json!({"title": "2001 – A Space Odyssey", "pages": 297}),
+        ),
+        EventCandidate {
+            traceinfo: Some(TraceInfo::WithState {
+                traceparent: traceparent.clone(),
+                tracestate: "vendor=value".to_string(),
+            }),
+            ..create_test_eventcandidate("/test", json!({"value": 2}))
+        },
+        EventCandidate {
+            traceinfo: Some(TraceInfo::Traceparent { traceparent }),
+            ..create_test_eventcandidate("/test", json!({"value": 3}))
+        },
+    ]
 }
 
 pub fn create_numbered_eventcandidates(count: usize) -> Vec<EventCandidate> {
@@ -55,7 +90,7 @@ pub fn assert_event_match_eventcandidate(
         "application/json",
         "Data content type should be application/json"
     );
-    assert_eq!(event.hash().len(), 64, "Hash should be present");
+    event.verify_hash().expect("Hash should be valid");
     assert_eq!(
         event.id(),
         expected_id.unwrap_or_default().to_string(),

@@ -12,7 +12,8 @@
 //! # use eventsourcingdb::container::Container;
 //! # tokio_test::block_on(async {
 //! let container = Container::start_default().await;
-//! # let container = Container::start_preview().await;
+//! # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+//! # let container = Container::builder().with_image_tag(&image_tag).start().await;
 //! // let client = container.get_client().await;
 //! # });
 //! ```
@@ -181,7 +182,8 @@ impl ContainerBuilder {
 /// # use eventsourcingdb::container::Container;
 /// # tokio_test::block_on(async {
 /// let container = Container::start_default().await;
-/// # let container = Container::start_preview().await;
+/// # let image_tag = std::env::var("EVENTSOURCINGDB_IMAGE_TAG").unwrap_or_else(|_| "preview".to_string());
+/// # let container = Container::builder().with_image_tag(&image_tag).start().await;
 /// // let client = container.get_client().await;
 /// # });
 /// ```

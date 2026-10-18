@@ -1,14 +1,15 @@
-use eventsourcingdb::container::Container;
+mod utils;
+use utils::{create_test_container, create_test_container_builder};
 
 #[tokio::test]
 async fn start_stop_testcontainer() {
-    let c = Container::start_preview().await.unwrap();
+    let c = create_test_container().await;
     c.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn get_base_url() {
-    let c = Container::start_preview().await.unwrap();
+    let c = create_test_container().await;
     let base_url = c.get_base_url().await.unwrap();
     let host = c.get_host().await.unwrap();
     let port = c.get_mapped_port().await.unwrap();
@@ -17,7 +18,7 @@ async fn get_base_url() {
 
 #[tokio::test]
 async fn db_is_reachable() {
-    let c = Container::start_preview().await.unwrap();
+    let c = create_test_container().await;
     let base_url = c.get_base_url().await.unwrap();
     let ping_url = base_url
         .join("/api/v1/ping")
@@ -27,7 +28,7 @@ async fn db_is_reachable() {
 
 #[tokio::test]
 async fn generate_client() {
-    let c = Container::start_preview().await.unwrap();
+    let c = create_test_container().await;
     let generated_client = c.get_client().await.unwrap();
     let base_url = c.get_base_url().await.unwrap();
     let api_token = c.get_api_token();
@@ -38,8 +39,7 @@ async fn generate_client() {
 
 #[tokio::test]
 async fn starts_with_a_custom_port() {
-    let c = Container::builder()
-        .with_image_tag("preview")
+    let c = create_test_container_builder()
         .with_port(4000)
         .start()
         .await

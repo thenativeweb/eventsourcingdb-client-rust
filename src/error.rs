@@ -3,6 +3,8 @@
 use reqwest::{self, StatusCode};
 use thiserror::Error;
 
+use crate::event::HashVersion;
+
 /// Error type for the client
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -50,8 +52,9 @@ pub enum ClientError {
     /// The server header is invalid
     #[error("Server must be EventSourcingDB")]
     InvalidServerHeader,
-    /// Neither an event nor a heartbeat arrived on a stream for 30 seconds
-    #[error("No event and no heartbeat arrived for 30 seconds")]
+    /// Neither an event nor a heartbeat arrived on a stream with heartbeats for the stall timeout, which is 30 seconds by
+    /// default, see [`crate::client::ClientBuilder::stall_timeout`]
+    #[error("No event and no heartbeat arrived for the stall timeout")]
     HeartbeatTimeout,
 }
 
@@ -79,12 +82,13 @@ pub enum EventError {
     #[cfg(feature = "cloudevents")]
     #[error("The passed cloudevent is invalid")]
     InvalidCloudevent,
-    /// Hash verification failed
-    #[error("Hash verification failed")]
+    /// Hash verification failed, either because the hash is invalid, or because it is of a version the SDK does not
+    /// support, which the message then names
+    #[error("{}", describe_hash_verification_failure(.expected))]
     HashVerificationFailed {
         /// Expected hash as in the DB
         expected: String,
-        /// Actual hash as computed
+        /// Actual hash as computed, which is empty if the expected hash is of a version the SDK does not support
         actual: String,
     },
     /// Serde error
@@ -99,4 +103,14 @@ pub enum EventError {
     /// The signature is invalid
     #[error("A problem with signature verification occurred: {0}")]
     SignatureError(#[from] ed25519_dalek::SignatureError),
+}
+
+/// Describes a failed hash verification, naming the version of the expected hash if the SDK does not support it.
+fn describe_hash_verification_failure(expected: &str) -> String {
+    match HashVersion::of(expected) {
+        HashVersion::Unsupported(version) => {
+            format!("Hash verification failed: the hash version {version} is not supported")
+        }
+        HashVersion::V1 | HashVersion::V2 => "Hash verification failed".to_string(),
+    }
 }
