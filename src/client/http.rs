@@ -107,6 +107,15 @@ impl Http {
     }
 }
 
+/// The error that a stream fails with that the server ends before it is complete: a finite stream that ends before
+/// its end, and a stream of observed events that ends without an error.
+pub fn stream_ended_unexpectedly() -> ClientError {
+    ClientError::IoError(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "The stream ended before it was complete",
+    ))
+}
+
 /// Tells whether the response is from EventSourcingDB, which names itself in the `Server` header.
 pub fn is_from_eventsourcingdb(response: &Response) -> bool {
     response

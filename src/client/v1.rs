@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use super::{
-    http::{Http, is_from_eventsourcingdb},
+    http::{Http, is_from_eventsourcingdb, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -100,16 +100,20 @@ struct ErrorPayload {
 pub trait StreamingRequest: ClientRequest {
     type ItemType: DeserializeOwned + Send + 'static;
     const ITEM_TYPE_NAME: &'static str;
+    /// Whether the stream ends with the body. A stream of observed events does not, since the server never ends it
+    /// without an error, so it fails if the body ends.
+    const ENDS_WITH_BODY: bool = true;
 
     /// Builds the stream of items, which ends with [`ClientError::ConnectionStalled`] once nothing arrived for the
-    /// stall timeout.
+    /// stall timeout, and after an error that the DB sends as an item.
     fn build_stream(
         http: &Http,
         response: reqwest::Response,
     ) -> BoxStream<'static, Result<Self::ItemType, ClientError>> {
         let status = response.status();
         let lines = http.lines(response);
-        end_after_stall(
+        end_after_failure(
+            Self::ENDS_WITH_BODY,
             lines
                 .map(|line| Ok(serde_json::from_str::<StreamLineItem>(line?.as_str())?))
                 .filter_map(move |o| async move {
@@ -218,16 +222,27 @@ fn code_of_v1_error(url_path: &str, status: StatusCode, text: &str) -> Option<&'
         .map(|(_, _, _, code)| *code)
 }
 
-/// Ends a stream of items after the error that reports a stall, so that a line that arrived only partly is not read.
-/// The items are dropped then, which closes the underlying response.
-fn end_after_stall<T>(
+/// Ends a stream of items after an error that ends it: the one that reports a stall, so that a line that arrived only
+/// partly is not read, an error of the connection, and an error that the DB sends as an item. The items are dropped
+/// then, which closes the underlying response.
+///
+/// If the body ends, the stream ends as well, unless it should not end with the body, then it ends with an error.
+fn end_after_failure<T>(
+    ends_with_body: bool,
     items: impl Stream<Item = Result<T, ClientError>>,
 ) -> impl Stream<Item = Result<T, ClientError>> {
-    stream::unfold(Some(Box::pin(items)), |items| async move {
+    stream::unfold(Some(Box::pin(items)), move |items| async move {
         let mut items = items?;
-        let item = items.next().await?;
-        let has_stalled = matches!(&item, Err(ClientError::ConnectionStalled));
-        Some((item, (!has_stalled).then_some(items)))
+        let Some(item) = items.next().await else {
+            return (!ends_with_body).then(|| (Err(stream_ended_unexpectedly()), None));
+        };
+        let is_final = matches!(
+            &item,
+            Err(ClientError::ConnectionStalled
+                | ClientError::IoError(_)
+                | ClientError::DbApiError(_))
+        );
+        Some((item, (!is_final).then_some(items)))
     })
     .fuse()
 }

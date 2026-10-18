@@ -320,7 +320,10 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     /// The stream ends with [`ClientError::ConnectionStalled`] if neither an event nor a heartbeat arrives for the
-    /// stall timeout, see [`ClientBuilder::stall_timeout`].
+    /// stall timeout, see [`ClientBuilder::stall_timeout`]. The server never ends the stream without an error, such
+    /// as the one with the code [`server-shutting-down`](crate::error::code::SERVER_SHUTTING_DOWN), so if it ends
+    /// without one, the stream ends with a [`ClientError::IoError`] of the kind
+    /// [`UnexpectedEof`](std::io::ErrorKind::UnexpectedEof).
     pub async fn observe_events<'a>(
         &self,
         subject: &'a str,

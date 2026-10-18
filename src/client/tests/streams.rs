@@ -134,18 +134,66 @@ async fn a_v2_stream_that_breaks_off_before_its_end_item_fails() {
 }
 
 #[tokio::test]
-async fn observing_events_through_the_v2_api_has_no_end_item() {
-    let server = start_server(Api::V2, Reply::lines(&[Api::V2.event(0)])).await;
-    let client = create_client(&server);
-    let events = collect(
-        client
-            .observe_events("/test", None)
-            .await
-            .expect("Failed to observe events"),
-    )
-    .await;
-    assert_eq!(events.len(), 1, "Expected one event, but got {events:?}");
-    assert!(events[0].is_ok());
+async fn an_observe_stream_that_the_server_ends_without_an_error_fails() {
+    for api in BOTH_APIS {
+        let server = start_server(api, Reply::lines(&[api.heartbeat(), api.event(0)])).await;
+        let client = create_client(&server);
+        let events = collect(
+            client
+                .observe_events("/test", None)
+                .await
+                .expect("Failed to observe events"),
+        )
+        .await;
+        assert_eq!(
+            events.len(),
+            2,
+            "Expected an event and an error through {api:?}, but got {events:?}"
+        );
+        assert!(events[0].is_ok());
+        assert!(
+            is_ended_without_end(&events[1]),
+            "Expected an error through {api:?}, but got {:?}",
+            events[1]
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_observe_stream_ends_with_the_error_that_the_server_sends() {
+    for api in BOTH_APIS {
+        let error = match api {
+            Api::V1 => json!({ "error": "server is shutting down" }),
+            Api::V2 => json!({
+                "code": crate::error::code::SERVER_SHUTTING_DOWN,
+                "description": "server is shutting down",
+                "details": {},
+            }),
+        };
+        let server = start_server(
+            api,
+            Reply::lines(&[api.event(0), api.item("error", &error)]),
+        )
+        .await;
+        let client = create_client(&server);
+        let events = collect(
+            client
+                .observe_events("/test", None)
+                .await
+                .expect("Failed to observe events"),
+        )
+        .await;
+        assert_eq!(
+            events.len(),
+            2,
+            "Expected an event and an error through {api:?}, but got {events:?}"
+        );
+        assert!(
+            matches!(&events[1], Err(ClientError::DbApiError(error)) if error.description == "server is shutting down"),
+            "Expected the error of the server through {api:?}, but got {:?}",
+            events[1]
+        );
+    }
 }
 
 #[tokio::test]

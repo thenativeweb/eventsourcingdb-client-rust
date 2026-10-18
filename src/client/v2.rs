@@ -2,7 +2,8 @@
 //!
 //! Every answer of the v2 API is an envelope, `{"type": …, "data": …}`, either as a single answer, or as an item of a
 //! stream of NDJSON, which the server keeps alive with heartbeats while there is nothing to send. A finite stream
-//! ends with an item of type `end`, so a stream that breaks off before it has failed. The server reports an error of
+//! ends with an item of type `end`, so a stream that breaks off before it has failed, and so has a stream of
+//! observed events that the server ends without an error. The server reports an error of
 //! the domain as an item of type `error` at status `200`, and an error of the transport with another status and a
 //! plain text.
 
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value, value::RawValue};
 
 use super::{
-    http::{Http, is_from_eventsourcingdb, query},
+    http::{Http, is_from_eventsourcingdb, query, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -195,25 +196,16 @@ async fn request_single<T: DeserializeOwned, B: Serialize + ?Sized>(
     parse_envelope(&envelope, item_type)
 }
 
-/// Whether a stream ends with an item of type `end`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ending {
-    /// The stream ends with an item of type `end`, so a stream that breaks off before it has failed.
-    WithEnd,
-    /// The stream never ends on its own, as when observing events.
-    Never,
-}
-
 /// Turns the body of the response into the stream of the data of its items of the given type.
 ///
 /// Heartbeats are left out. An item of type `error` ends the stream with the error it reports, and an item of type
-/// `end` ends it. A stream that should end with `end`, but breaks off before it, ends with an error. Once nothing
-/// arrived for the stall timeout, the stream ends with [`ClientError::ConnectionStalled`].
+/// `end` ends it. A stream that breaks off before either ends with an error, which also holds for observing events,
+/// whose stream has no item of type `end`, since the server never ends it without an error. Once nothing arrived for
+/// the stall timeout, the stream ends with [`ClientError::ConnectionStalled`].
 fn request_items<T: DeserializeOwned + Send + 'static>(
     http: &Http,
     response: reqwest::Response,
     item_type: &'static str,
-    ending: Ending,
 ) -> BoxStream<'static, Result<T, ClientError>> {
     let lines = http.lines(response).boxed();
 
@@ -224,10 +216,7 @@ fn request_items<T: DeserializeOwned + Send + 'static>(
                 Some(Ok(line)) => line,
                 // The stream stalled, or the connection broke.
                 Some(Err(error)) => return Some((Err(error), None)),
-                None if ending == Ending::WithEnd => {
-                    return Some((Err(ended_without_end()), None));
-                }
-                None => return None,
+                None => return Some((Err(stream_ended_unexpectedly()), None)),
             };
             let envelope = match serde_json::from_str::<Envelope>(&line) {
                 Ok(envelope) => envelope,
@@ -244,24 +233,15 @@ fn request_items<T: DeserializeOwned + Send + 'static>(
     .boxed()
 }
 
-/// The error a stream fails with that breaks off before its item of type `end`.
-fn ended_without_end() -> ClientError {
-    ClientError::IoError(std::io::Error::new(
-        std::io::ErrorKind::UnexpectedEof,
-        "The stream ended before its end item",
-    ))
-}
-
 /// Sends a request that expects a stream of items of the given type, and returns the stream.
 async fn request_streaming<T: DeserializeOwned + Send + 'static, B: Serialize + ?Sized>(
     http: &Http,
     path: &str,
     body: Option<&B>,
     item_type: &'static str,
-    ending: Ending,
 ) -> Result<BoxStream<'static, Result<T, ClientError>>, ClientError> {
     let response = send(http, query(), path, body).await?;
-    Ok(request_items(http, response, item_type, ending))
+    Ok(request_items(http, response, item_type))
 }
 
 pub async fn ping(http: &Http) -> Result<(), ClientError> {
@@ -299,7 +279,7 @@ pub async fn write_events(
 
     let writing = async {
         let response = send_request(http, request).await?;
-        request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
+        request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await
     };
@@ -340,10 +320,9 @@ pub async fn register_event_schema(
 
     let registering = async {
         let response = send_request(http, request).await?;
-        let mut events: Vec<ManagementEvent> =
-            request_items(http, response, ITEM_TYPE_EVENT, Ending::WithEnd)
-                .try_collect()
-                .await?;
+        let mut events: Vec<ManagementEvent> = request_items(http, response, ITEM_TYPE_EVENT)
+            .try_collect()
+            .await?;
 
         match (events.pop(), events.is_empty()) {
             (Some(event), true)
@@ -378,7 +357,6 @@ pub async fn read_events(
         "/api/v2/data/read-events",
         Some(&ReadEventsBody { subject, options }),
         ITEM_TYPE_EVENT,
-        Ending::WithEnd,
     )
     .await
 }
@@ -393,7 +371,6 @@ pub async fn observe_events(
         "/api/v2/data/observe-events",
         Some(&ObserveEventsBody { subject, options }),
         ITEM_TYPE_EVENT,
-        Ending::Never,
     )
     .await
 }
@@ -407,7 +384,6 @@ pub async fn run_eventql_query(
         "/api/v2/data/run-eventql-query",
         Some(&RunEventqlQueryBody { query: query_text }),
         ITEM_TYPE_ROW,
-        Ending::WithEnd,
     )
     .await?;
     Ok(rows.map_ok(|row| row.value).boxed())
@@ -423,7 +399,6 @@ pub async fn read_subjects(
         "/api/v2/data/read-subjects",
         Some(&ReadSubjectsBody { subject, options }),
         ITEM_TYPE_SUBJECT,
-        Ending::WithEnd,
     )
     .await?;
     Ok(subjects.map_ok(|subject| subject.subject).boxed())
@@ -437,7 +412,6 @@ pub async fn read_event_types(
         "/api/v2/data/read-event-types",
         None::<&()>,
         ITEM_TYPE_EVENT_TYPE,
-        Ending::WithEnd,
     )
     .await
 }
