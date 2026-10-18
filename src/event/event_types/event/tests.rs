@@ -140,12 +140,14 @@ fn version_2_hashes_data_byte_for_byte() {
 fn rejects_a_hash_of_an_unsupported_version() {
     let event = parse_with(V2_EVENT, V2_EVENT_HASH, UNSUPPORTED_HASH);
 
-    let (expected, actual) = assert_hash_verification_failed(&event);
-    assert_eq!(expected, UNSUPPORTED_HASH);
-    assert_eq!(actual, "");
+    let result = event.verify_hash();
+    assert!(
+        matches!(&result, Err(EventError::UnsupportedHashVersion { version }) if version == "v3"),
+        "Expected an unsupported hash version, but got {result:?}"
+    );
     assert_eq!(
-        EventError::HashVerificationFailed { expected, actual }.to_string(),
-        "Hash verification failed: the hash version v3 is not supported"
+        result.unwrap_err().to_string(),
+        "The hash version 'v3' is not supported"
     );
 }
 
@@ -169,11 +171,7 @@ fn signature_verification_fails_for_a_hash_of_an_unsupported_version() {
 
     let result = event.verify_signature(&verifying_key);
     assert!(
-        matches!(
-            &result,
-            Err(EventError::HashVerificationFailed { expected, actual })
-                if expected == UNSUPPORTED_HASH && actual.is_empty()
-        ),
-        "Expected a failed hash verification, but got {result:?}"
+        matches!(&result, Err(EventError::UnsupportedHashVersion { version }) if version == "v3"),
+        "Expected an unsupported hash version, but got {result:?}"
     );
 }

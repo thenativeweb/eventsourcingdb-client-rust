@@ -21,13 +21,13 @@
 mod client_request;
 mod precondition;
 pub mod request_options;
-mod stall_timeout;
+pub(crate) mod stall_timeout;
 #[cfg(test)]
 mod tests;
 
 use crate::{
-    client::client_request::ReadEventTypeRequest,
-    error::ClientError,
+    client::client_request::{ReadEventTypeRequest, code_of_v1_error},
+    error::{ClientError, DbApiError},
     event::{Event, EventCandidate, ManagementEvent},
     request_options::EventType,
 };
@@ -44,6 +44,20 @@ use url::Url;
 
 /// How long a request waits for anything to arrive from the server by default before it fails
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Reads how long to wait before trying again from the `Retry-After` header of the response, which names it in
+/// seconds.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .map(Duration::from_secs)
+}
 
 /// Client for an [EventsourcingDB](https://www.eventsourcingdb.io/) instance.
 ///
@@ -85,10 +99,8 @@ impl ClientBuilder {
     /// response. Everything that arrives restarts it: every part of a response, every event, row, and heartbeat. It
     /// is not a total duration, so a long stream that keeps receiving events or heartbeats is never cut off.
     ///
-    /// Once the stall timeout elapses, the streams of [`Client::observe_events`] and [`Client::run_eventql_query`]
-    /// end with [`ClientError::HeartbeatTimeout`]. Every other request, and every other stream, fails with a
-    /// [`ClientError::IoError`] whose kind is [`std::io::ErrorKind::TimedOut`], and so does waiting for the response
-    /// of [`Client::observe_events`] and [`Client::run_eventql_query`]. The connection is closed then.
+    /// Once the stall timeout elapses, the request fails with [`ClientError::ConnectionStalled`], and a stream ends
+    /// with it. The connection is closed then.
     ///
     /// # Panics
     /// Panics if the stall timeout is zero, since there is no stall timeout that is turned off.
@@ -221,18 +233,11 @@ impl Client {
     ) -> Result<R::Response, ClientError> {
         let response =
             stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
+        let response = self.check_response(endpoint.url_path(), response).await?;
 
-        if response.status().is_success() {
-            Self::validate_server_headers(&response)?;
-            let result = stall_timeout::read_json(response, self.stall_timeout).await?;
-            endpoint.validate_response(&result)?;
-            Ok(result)
-        } else {
-            Err(ClientError::DBApiError(
-                response.status(),
-                stall_timeout::read_text(response, self.stall_timeout).await,
-            ))
-        }
+        let result = stall_timeout::read_json(response, self.stall_timeout).await?;
+        endpoint.validate_response(&result)?;
+        Ok(result)
     }
 
     /// Utility function to request an endpoint of the API as a stream.
@@ -247,15 +252,35 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<R::ItemType, ClientError>>, ClientError> {
         let response =
             stall_timeout::send(self.build_request(&endpoint)?, self.stall_timeout).await?;
+        let response = self.check_response(endpoint.url_path(), response).await?;
+
+        Ok(R::build_stream(response, self.stall_timeout))
+    }
+
+    /// Checks that the response is from EventSourcingDB, and that it reports success, and returns it if so.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, and a
+    /// [`DbApiError`] with the status and the text of the response if it does not report success.
+    async fn check_response(
+        &self,
+        url_path: &str,
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, ClientError> {
         Self::validate_server_headers(&response)?;
         if response.status().is_success() {
-            Ok(R::build_stream(response, self.stall_timeout))
-        } else {
-            Err(ClientError::DBApiError(
-                response.status(),
-                stall_timeout::read_text(response, self.stall_timeout).await,
-            ))
+            return Ok(response);
         }
+
+        let status = response.status();
+        let retry_after = retry_after(&response);
+        let text = stall_timeout::read_text(response, self.stall_timeout).await;
+        let error = DbApiError::from_status(status, &text, retry_after);
+        Err(match code_of_v1_error(url_path, status, &text) {
+            Some(code) => error.with_code(code),
+            None => error,
+        }
+        .into())
     }
 
     /// Pings the DB instance to check if it is reachable.
@@ -394,8 +419,8 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither an event nor a heartbeat arrives for the stall
-    /// timeout, see [`ClientBuilder::stall_timeout`].
+    /// The stream ends with [`ClientError::ConnectionStalled`] if neither an event nor a heartbeat arrives for the
+    /// stall timeout, see [`ClientBuilder::stall_timeout`].
     pub async fn observe_events<'a>(
         &self,
         subject: &'a str,
@@ -616,7 +641,7 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
-    /// The stream ends with [`ClientError::HeartbeatTimeout`] if neither a row nor a heartbeat arrives for the stall
+    /// The stream ends with [`ClientError::ConnectionStalled`] if neither a row nor a heartbeat arrives for the stall
     /// timeout, see [`ClientBuilder::stall_timeout`].
     pub async fn run_eventql_query(
         &self,

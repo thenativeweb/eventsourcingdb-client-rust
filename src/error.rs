@@ -1,16 +1,22 @@
 //! This module contains all error types of the SDK.
 
+pub mod code;
+
+use std::time::Duration;
+
 use reqwest::{self, StatusCode};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
-use crate::event::HashVersion;
+use crate::client::stall_timeout::is_stalled;
 
 /// Error type for the client
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ClientError {
     /// An IO Error occurred
     #[error("An IO error occurred: {0}")]
-    IoError(#[from] std::io::Error),
+    IoError(std::io::Error),
     /// The provided request method is invalid
     #[error("The provided request method is invalid")]
     InvalidRequestMethod,
@@ -32,12 +38,9 @@ pub enum ClientError {
     /// There was a problem with the JSON serialization
     #[error("The JSON serialization failed: {0}")]
     SerdeJsonError(#[from] serde_json::Error),
-    /// The DB returned an error in the response
-    #[error("The DB returned an error in the response: {0}")]
-    DBError(String),
-    /// The DB returned an error
-    #[error("The DB returned an error: {0}")]
-    DBApiError(StatusCode, String),
+    /// The DB reported an error, see [`DbApiError`]
+    #[error(transparent)]
+    DbApiError(#[from] DbApiError),
     // check if this can hold a validation error in the future
     /// The passed jsonschema is invalid
     #[error("The passed jsonschema is invalid")]
@@ -49,18 +52,112 @@ pub enum ClientError {
     /// The database returned an invalid response type
     #[error("The DB returned an invalid response type: {0}")]
     InvalidResponseType(String),
-    /// The server header is invalid
+    /// The server header is invalid, so the answer is not from EventSourcingDB
     #[error("Server must be EventSourcingDB")]
     InvalidServerHeader,
-    /// Neither an event nor a heartbeat arrived on a stream with heartbeats for the stall timeout, which is 30 seconds by
-    /// default, see [`crate::client::ClientBuilder::stall_timeout`]
-    #[error("No event and no heartbeat arrived for the stall timeout")]
-    HeartbeatTimeout,
+    /// Nothing at all arrived from the server for the stall timeout, which is 30 seconds by default, see
+    /// [`crate::client::ClientBuilder::stall_timeout`]
+    #[error("The connection stalled, since nothing arrived from the server for the stall timeout")]
+    ConnectionStalled,
+}
+
+impl From<std::io::Error> for ClientError {
+    /// Turns the error that a request fails with once nothing arrived for the stall timeout into
+    /// [`ClientError::ConnectionStalled`], and every other error into [`ClientError::IoError`].
+    fn from(error: std::io::Error) -> Self {
+        if is_stalled(&error) {
+            Self::ConnectionStalled
+        } else {
+            Self::IoError(error)
+        }
+    }
+}
+
+/// An error that the DB reported.
+///
+/// This is every error that comes from the DB itself: an error the DB answers with a status other than `200`, and an
+/// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer.
+///
+/// ```
+/// use eventsourcingdb::error::{ClientError, code};
+///
+/// fn describe(error: &ClientError) -> String {
+///     match error {
+///         ClientError::DbApiError(error) if error.code == code::PRECONDITION_VIOLATED => {
+///             "A precondition does not hold".to_string()
+///         }
+///         ClientError::DbApiError(error) => error.description.clone(),
+///         _ => error.to_string(),
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Error)]
+#[error("{}", describe_db_api_error(self))]
+#[non_exhaustive]
+pub struct DbApiError {
+    /// The code of the error, exactly as the DB sends it, which is the URL of the page that documents the error, such
+    /// as `https://docs.eventsourcingdb.io/errors/precondition-violated`. The module [`code`] has a constant for each
+    /// code. It is empty for an error without a code.
+    pub code: String,
+    /// The description of the error
+    pub description: String,
+    /// The details of the error, which locate where it occurred and name the offending value, and which are empty for
+    /// an error without details
+    pub details: Map<String, Value>,
+    /// The HTTP status of the answer, which is `200` for an error that the DB sends in the body of an answer
+    pub status: StatusCode,
+    /// How long to wait before trying again, as the DB names it in the `Retry-After` header of an answer with status
+    /// `429`, which it sends once there are too many requests. It is `None` for every other status, and if the
+    /// header is missing.
+    pub retry_after: Option<Duration>,
+}
+
+impl DbApiError {
+    /// Creates an error from the status and the text of an answer, which has no code and no details.
+    pub(crate) fn from_status(
+        status: StatusCode,
+        text: &str,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        Self {
+            code: String::new(),
+            description: text.trim_end().to_string(),
+            details: Map::new(),
+            status,
+            retry_after: if status == StatusCode::TOO_MANY_REQUESTS {
+                retry_after
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Sets the code of the error.
+    pub(crate) fn with_code(mut self, code: &str) -> Self {
+        self.code = code.to_string();
+        self
+    }
+}
+
+/// Describes an error that the DB reported, naming its code if it has one.
+fn describe_db_api_error(error: &DbApiError) -> String {
+    if error.code.is_empty() {
+        format!(
+            "The DB returned an error with status {}: {}",
+            error.status, error.description
+        )
+    } else {
+        format!(
+            "The DB returned the error {} with status {}: {}",
+            error.code, error.status, error.description
+        )
+    }
 }
 
 /// Error type for the [`crate::container`] feature.
 #[cfg(feature = "testcontainer")]
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ContainerError {
     /// This error is returned when anything goes wrong with the testcontainers crate.
     /// If you experience this error, a likely cause is that your docker daemon is not running.
@@ -77,19 +174,25 @@ pub enum ContainerError {
 
 /// Error type for the event
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum EventError {
     /// The passed cloudevent is invalid
     #[cfg(feature = "cloudevents")]
     #[error("The passed cloudevent is invalid")]
     InvalidCloudevent,
-    /// Hash verification failed, either because the hash is invalid, or because it is of a version the SDK does not
-    /// support, which the message then names
-    #[error("{}", describe_hash_verification_failure(.expected))]
+    /// Hash verification failed, because the hash is invalid
+    #[error("Hash verification failed")]
     HashVerificationFailed {
         /// Expected hash as in the DB
         expected: String,
-        /// Actual hash as computed, which is empty if the expected hash is of a version the SDK does not support
+        /// Actual hash as computed
         actual: String,
+    },
+    /// The hash is of a version the SDK does not support, such as `v3` for a hash that starts with `esdb:hash:v3:`
+    #[error("The hash version '{version}' is not supported")]
+    UnsupportedHashVersion {
+        /// The version of the hash, such as `v3`
+        version: String,
     },
     /// Serde error
     #[error("Serde error: {0}")]
@@ -103,14 +206,4 @@ pub enum EventError {
     /// The signature is invalid
     #[error("A problem with signature verification occurred: {0}")]
     SignatureError(#[from] ed25519_dalek::SignatureError),
-}
-
-/// Describes a failed hash verification, naming the version of the expected hash if the SDK does not support it.
-fn describe_hash_verification_failure(expected: &str) -> String {
-    match HashVersion::of(expected) {
-        HashVersion::Unsupported(version) => {
-            format!("Hash verification failed: the hash version {version} is not supported")
-        }
-        HashVersion::V1 | HashVersion::V2 => "Hash verification failed".to_string(),
-    }
 }

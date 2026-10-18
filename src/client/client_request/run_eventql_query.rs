@@ -24,5 +24,4 @@ impl ClientRequest for RunEventqlQueryRequest<'_> {
 impl StreamingRequest for RunEventqlQueryRequest<'_> {
     type ItemType = EventqlRow;
     const ITEM_TYPE_NAME: &'static str = "row";
-    const HAS_HEARTBEATS: bool = true;
 }

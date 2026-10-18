@@ -221,17 +221,16 @@ impl Event {
     /// ```
     ///
     /// # Errors
-    /// Returns [`EventError::HashVerificationFailed`] if the hash is invalid.
-    /// If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, it returns the same error with an
-    /// empty `actual` hash, and the message of the error names the version.
+    /// Returns [`EventError::HashVerificationFailed`] if the hash is invalid, and
+    /// [`EventError::UnsupportedHashVersion`], which names the version, if the hash is of a version the SDK does not
+    /// support, such as `esdb:hash:v3:…`.
     pub fn verify_hash(&self) -> Result<(), EventError> {
         let actual = match HashVersion::of(&self.hash) {
             HashVersion::V1 => self.compute_hash_v1(),
             HashVersion::V2 => self.compute_hash_v2(),
-            HashVersion::Unsupported(_) => {
-                return Err(EventError::HashVerificationFailed {
-                    expected: self.hash.clone(),
-                    actual: String::new(),
+            HashVersion::Unsupported(version) => {
+                return Err(EventError::UnsupportedHashVersion {
+                    version: version.to_string(),
                 });
             }
         };
