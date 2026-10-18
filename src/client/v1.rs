@@ -146,36 +146,76 @@ fn error_of_item(status: StatusCode, payload: &str) -> ClientError {
     DbApiError::from_status(status, &description, None).into()
 }
 
+/// The errors of the v1 API that clearly match a code of the v2 API: the path of the request, or `None` for every
+/// path, the status, the start of the text, exactly as EventSourcingDB 1.2.0 sends it, and the code
+const CODES_OF_V1_ERRORS: &[(Option<&str>, StatusCode, &str, &str)] = &[
+    (
+        Some(WriteEventsRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "state conflict: precondition failed",
+        code::PRECONDITION_VIOLATED,
+    ),
+    (
+        Some(WriteEventsRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "state conflict: exceeded max store capacity",
+        code::CAPACITY_EXCEEDED,
+    ),
+    (
+        Some(WriteEventsRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "schema conflict: event candidate does not match schema",
+        code::EVENT_SCHEMA_VIOLATED,
+    ),
+    (
+        Some(RegisterEventSchemaRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "schema conflict: schema already exists",
+        code::EVENT_SCHEMA_ALREADY_REGISTERED,
+    ),
+    (
+        Some(RegisterEventSchemaRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "schema conflict: event with ID",
+        code::EVENT_SCHEMA_VIOLATED,
+    ),
+    (
+        Some(ReadEventsRequest::URL_PATH),
+        StatusCode::CONFLICT,
+        "state conflict: fromLatestEvent results in an event ID greater than upperBound ID",
+        code::RANGE_UNSATISFIABLE,
+    ),
+    (
+        Some(ReadEventTypeRequest::URL_PATH),
+        StatusCode::NOT_FOUND,
+        "",
+        code::EVENT_TYPE_UNKNOWN,
+    ),
+    (
+        None,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the current operation mode conflicts with the given request",
+        code::STORE_READ_ONLY,
+    ),
+    (
+        Some(WriteEventsRequest::URL_PATH),
+        StatusCode::INSUFFICIENT_STORAGE,
+        "",
+        code::LICENSE_INVALID,
+    ),
+];
+
 /// Assigns the code of the v2 API to an error of the v1 API where the two clearly match, as EventSourcingDB 1.2.0
 /// reports the error with the status and the text of the answer.
 fn code_of_v1_error(url_path: &str, status: StatusCode, text: &str) -> Option<&'static str> {
-    let text = text.trim_end();
-    let is_write_events = url_path == WriteEventsRequest::URL_PATH;
-
-    match status {
-        StatusCode::CONFLICT if is_write_events && text.starts_with("state conflict") => {
-            Some(code::PRECONDITION_VIOLATED)
-        }
-        StatusCode::CONFLICT if is_write_events && text.starts_with("schema conflict") => {
-            Some(code::EVENT_SCHEMA_VIOLATED)
-        }
-        StatusCode::CONFLICT
-            if url_path == RegisterEventSchemaRequest::URL_PATH
-                && text == "schema conflict: schema already exists" =>
-        {
-            Some(code::EVENT_SCHEMA_ALREADY_REGISTERED)
-        }
-        StatusCode::NOT_FOUND if url_path == ReadEventTypeRequest::URL_PATH => {
-            Some(code::EVENT_TYPE_UNKNOWN)
-        }
-        StatusCode::SERVICE_UNAVAILABLE
-            if text.starts_with("the current operation mode conflicts with the given request") =>
-        {
-            Some(code::STORE_READ_ONLY)
-        }
-        StatusCode::INSUFFICIENT_STORAGE if is_write_events => Some(code::LICENSE_INVALID),
-        _ => None,
-    }
+    CODES_OF_V1_ERRORS
+        .iter()
+        .find(|(path, error_status, start_of_text, _)| {
+            path.is_none_or(|path| path == url_path)
+                && *error_status == status
+                && text.starts_with(start_of_text)
+        })
+        .map(|(_, _, _, code)| *code)
 }
 
 /// Ends a stream of items after the error that reports a stall, so that a line that arrived only partly is not read.

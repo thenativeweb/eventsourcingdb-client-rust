@@ -12,129 +12,185 @@ use super::{
 };
 use crate::error::{ClientError, code};
 
+/// A call of the client, for the tests that send each call
+#[derive(Debug, Clone, Copy)]
+enum Call {
+    WriteEvents,
+    RegisterEventSchema,
+    ReadEvents,
+    ReadEventType,
+    ObserveEvents,
+}
+
+impl Call {
+    /// Sends the call to a server that offers the given API and answers with the given reply, and returns the
+    /// [`DbApiError`](crate::error::DbApiError) the call fails with.
+    async fn fail(self, api: Api, reply: Reply) -> crate::error::DbApiError {
+        db_api_error(match self {
+            Self::WriteEvents => {
+                fail_with(api, reply, |client| async move {
+                    client.write_events(vec![test_candidate()], vec![]).await
+                })
+                .await
+            }
+            Self::RegisterEventSchema => {
+                fail_with(api, reply, |client| async move {
+                    client
+                        .register_event_schema(
+                            "io.eventsourcingdb.test",
+                            &json!({ "type": "object" }),
+                        )
+                        .await
+                })
+                .await
+            }
+            Self::ReadEvents => {
+                fail_with(api, reply, |client| async move {
+                    client.read_events("/test", None).await.map(|_| ())
+                })
+                .await
+            }
+            Self::ReadEventType => {
+                fail_with(api, reply, |client| async move {
+                    client.read_event_type("io.eventsourcingdb.test").await
+                })
+                .await
+            }
+            Self::ObserveEvents => {
+                fail_with(api, reply, |client| async move {
+                    client.observe_events("/test", None).await.map(|_| ())
+                })
+                .await
+            }
+        })
+    }
+}
+
 #[tokio::test]
 async fn v1_errors_get_the_codes_of_the_v2_api_where_they_clearly_match() {
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(409, "state conflict: precondition failed\n"),
-            |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::PRECONDITION_VIOLATED);
-    assert_eq!(error.status, 409);
-    assert_eq!(error.description, "state conflict: precondition failed");
-
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(
-                409,
-                "schema conflict: event candidate does not match schema: expected string, but got number\n",
-            ),
-            |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::EVENT_SCHEMA_VIOLATED);
-
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(409, "schema conflict: schema already exists\n"),
-            |client| async move {
-                client
-                    .register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" }))
-                    .await
-            },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::EVENT_SCHEMA_ALREADY_REGISTERED);
-
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(404, "event type 'io.eventsourcingdb.test' not found\n"),
-            |client| async move { client.read_event_type("io.eventsourcingdb.test").await },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::EVENT_TYPE_UNKNOWN);
-    assert_eq!(error.status, 404);
-
-    let operation_mode_conflicts =
-        "the current operation mode conflicts with the given request: writing is not permitted\n";
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(503, operation_mode_conflicts),
-            |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::STORE_READ_ONLY);
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(503, operation_mode_conflicts),
-            |client| async move { client.read_events("/test", None).await.map(|_| ()) },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::STORE_READ_ONLY);
-
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(507, "insufficient storage\n"),
-            |client| async move { client.write_events(vec![test_candidate()], vec![]).await },
-        )
-        .await,
-    );
-    assert_eq!(error.code, code::LICENSE_INVALID);
-    assert_eq!(error.status, 507);
+    // The texts are exactly the ones of EventSourcingDB 1.2.0, which ends each with a line break.
+    let cases = [
+        (
+            Call::WriteEvents,
+            409,
+            "state conflict: precondition failed\n",
+            code::PRECONDITION_VIOLATED,
+        ),
+        (
+            Call::WriteEvents,
+            409,
+            "state conflict: exceeded max store capacity\n",
+            code::CAPACITY_EXCEEDED,
+        ),
+        (
+            Call::WriteEvents,
+            409,
+            "schema conflict: event candidate does not match schema: expected string, but got number\n",
+            code::EVENT_SCHEMA_VIOLATED,
+        ),
+        (
+            Call::RegisterEventSchema,
+            409,
+            "schema conflict: schema already exists\n",
+            code::EVENT_SCHEMA_ALREADY_REGISTERED,
+        ),
+        (
+            Call::RegisterEventSchema,
+            409,
+            "schema conflict: event with ID 0: expected string, but got number\n",
+            code::EVENT_SCHEMA_VIOLATED,
+        ),
+        (
+            Call::ReadEvents,
+            409,
+            "state conflict: fromLatestEvent results in an event ID greater than upperBound ID\n",
+            code::RANGE_UNSATISFIABLE,
+        ),
+        (
+            Call::ReadEventType,
+            404,
+            "event type 'io.eventsourcingdb.test' not found\n",
+            code::EVENT_TYPE_UNKNOWN,
+        ),
+        (
+            Call::WriteEvents,
+            503,
+            "the current operation mode conflicts with the given request: writing is not permitted\n",
+            code::STORE_READ_ONLY,
+        ),
+        (
+            Call::ReadEvents,
+            503,
+            "the current operation mode conflicts with the given request: reading is not permitted\n",
+            code::STORE_READ_ONLY,
+        ),
+        (
+            Call::ObserveEvents,
+            503,
+            "the current operation mode conflicts with the given request\n",
+            code::STORE_READ_ONLY,
+        ),
+        (
+            Call::WriteEvents,
+            507,
+            "insufficient storage\n",
+            code::LICENSE_INVALID,
+        ),
+    ];
+    for (call, status, text, expected_code) in cases {
+        let error = call.fail(Api::V1, Reply::text(status, text)).await;
+        assert_eq!(
+            error.code, expected_code,
+            "Unexpected code for {call:?} with {status} {text}"
+        );
+        assert_eq!(error.status, status);
+        assert_eq!(error.description, text.trim_end());
+    }
 }
 
 #[tokio::test]
 async fn v1_errors_that_match_no_code_of_the_v2_api_have_none() {
     let cases = [
-        // A schema conflict with events that already exist, which has no code of its own
+        // A state conflict of a write that names neither a precondition nor the capacity
+        (Call::WriteEvents, 409, "state conflict: something else\n"),
+        (Call::WriteEvents, 409, "schema conflict: something else\n"),
         (
+            Call::RegisterEventSchema,
             409,
-            "schema conflict: event with ID 0: expected string, but got number\n",
+            "schema conflict: something else\n",
         ),
-        (400, "bad request: invalid event type\n"),
-        (503, "server is shutting down\n"),
-        // Only writing events fails with 507 for an invalid license.
-        (507, "insufficient storage\n"),
+        // The texts of one call do not match on another one.
+        (
+            Call::RegisterEventSchema,
+            409,
+            "state conflict: precondition failed\n",
+        ),
+        (
+            Call::WriteEvents,
+            409,
+            "schema conflict: schema already exists\n",
+        ),
+        (
+            Call::WriteEvents,
+            409,
+            "state conflict: fromLatestEvent results in an event ID greater than upperBound ID\n",
+        ),
+        // A 404 means an unknown event type only when reading one, and a 507 an invalid license only when writing.
+        (Call::ReadEvents, 404, "404 page not found\n"),
+        (Call::RegisterEventSchema, 507, "insufficient storage\n"),
+        (Call::WriteEvents, 400, "bad request: invalid event type\n"),
+        (Call::WriteEvents, 503, "server is shutting down\n"),
     ];
-    for (status, text) in cases {
-        let error = db_api_error(
-            fail_with(Api::V1, Reply::text(status, text), |client| async move {
-                client
-                    .register_event_schema("io.eventsourcingdb.test", &json!({ "type": "object" }))
-                    .await
-            })
-            .await,
+    for (call, status, text) in cases {
+        let error = call.fail(Api::V1, Reply::text(status, text)).await;
+        assert_eq!(
+            error.code, "",
+            "Expected no code for {call:?} with {status} {text}"
         );
-        assert_eq!(error.code, "", "Expected no code for {status} {text}");
         assert_eq!(error.status, status);
         assert_eq!(error.description, text.trim_end());
         assert!(error.details.is_empty());
     }
-
-    // A 404 means an unknown event type only when reading one.
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            Reply::text(404, "404 page not found\n"),
-            |client| async move { client.read_events("/test", None).await.map(|_| ()) },
-        )
-        .await,
-    );
-    assert_eq!(error.code, "");
 }
 
 #[tokio::test]
