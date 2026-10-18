@@ -175,3 +175,20 @@ fn signature_verification_fails_for_a_hash_of_an_unsupported_version() {
         "Expected an unsupported hash version, but got {result:?}"
     );
 }
+
+#[test]
+fn signature_verification_fails_for_an_invalid_signature() {
+    let verifying_key = SigningKey::from_bytes(&[7; 32]).verifying_key();
+    let signature = format!("esdb:signature:v1:{}", "0".repeat(128));
+    let event = parse_with(
+        V2_EVENT,
+        r#""signature":null"#,
+        &format!(r#""signature":"{signature}""#),
+    );
+
+    let result = event.verify_signature(&verifying_key);
+    assert!(
+        matches!(&result, Err(EventError::SignatureVerificationFailed(_))),
+        "Expected a failed signature verification, but got {result:?}"
+    );
+}

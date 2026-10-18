@@ -19,9 +19,6 @@ pub enum ClientError {
     /// An IO Error occurred
     #[error("An IO error occurred: {0}")]
     IoError(#[source] std::io::Error),
-    /// The provided request method is invalid
-    #[error("The provided request method is invalid")]
-    InvalidRequestMethod,
     /// The provided event type is invalid
     #[error("The provided event type is invalid")]
     InvalidEventType,
@@ -214,7 +211,7 @@ pub enum EventError {
     /// Signature is malformed
     #[error("Signature is malformed")]
     MalformedSignature,
-    /// The signature is invalid
-    #[error("A problem with signature verification occurred: {0}")]
-    SignatureError(#[from] ed25519_dalek::SignatureError),
+    /// Signature verification failed, because the signature is invalid
+    #[error("Signature verification failed: {0}")]
+    SignatureVerificationFailed(#[from] ed25519_dalek::SignatureError),
 }

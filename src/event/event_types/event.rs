@@ -301,8 +301,9 @@ impl Event {
     /// To do this, the hash of the event is verified first before checking the signature against that hash.
     ///
     /// # Errors
-    /// Returns an error if the signature is missing or malformed, or if the signature
-    /// verification fails.
+    /// Returns the errors of [`Event::verify_hash`] if the hash can not be verified, [`EventError::MissingSignature`]
+    /// if the event has no signature, [`EventError::MalformedSignature`] if the signature can not be decoded, and
+    /// [`EventError::SignatureVerificationFailed`] if the signature is invalid.
     pub fn verify_signature(&self, public_key: &VerifyingKey) -> Result<(), EventError> {
         const SIGNATURE_PREFIX: &str = "esdb:signature:v1:";
 

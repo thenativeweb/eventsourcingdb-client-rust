@@ -602,7 +602,7 @@ match result {
 
 To verify the authenticity of an event, call the `verify_signature` function on the event instance. This requires the public key that matches the private key used for signing on the server.
 
-The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error: the errors of `verify_hash` for the hash, `EventError::MissingSignature` if the event has no signature, `EventError::MalformedSignature` if the signature can not be decoded, and `EventError::SignatureError` if the signature is invalid:
+The function first verifies the event's hash, and then checks the signature. If any verification step fails, it returns an error: the errors of `verify_hash` for the hash, `EventError::MissingSignature` if the event has no signature, `EventError::MalformedSignature` if the signature can not be decoded, and `EventError::SignatureVerificationFailed` if the signature is invalid:
 
 ```rust
 use ed25519_dalek::VerifyingKey;
@@ -752,6 +752,18 @@ Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offe
   // After
   Err(EventError::UnsupportedHashVersion { version }) => // ...
   ```
+
+- `verify_signature` returns an `EventError::SignatureVerificationFailed` error for an invalid signature, which replaces `EventError::SignatureError`:
+
+  ```rust
+  // Before
+  Err(EventError::SignatureError(error)) => // ...
+
+  // After
+  Err(EventError::SignatureVerificationFailed(error)) => // ...
+  ```
+
+- `ClientError::InvalidRequestMethod` is removed, since no request fails with it.
 
 - `ClientError`, `EventError`, and `ContainerError` are `#[non_exhaustive]`, so a `match` on them needs an arm for all other variants:
 
