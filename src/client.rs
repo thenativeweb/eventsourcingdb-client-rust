@@ -49,6 +49,10 @@ const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// Create it with [`Client::new`], or with [`Client::builder`] to configure it, for example with
 /// [`ClientBuilder::stall_timeout`].
+///
+/// The client needs a Tokio runtime with the time driver enabled, since every request runs with the stall timeout.
+/// `#[tokio::main]` and [`enable_all`](tokio::runtime::Builder::enable_all) include it; if you build the runtime
+/// yourself, call [`enable_time`](tokio::runtime::Builder::enable_time), or every request panics.
 #[derive(Debug)]
 pub struct Client {
     base_url: Url,

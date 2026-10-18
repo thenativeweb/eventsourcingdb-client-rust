@@ -68,6 +68,8 @@ let client = Client::builder(base_url, api_token)
 
 If the server stalls while the stream of `observe_events` or `run_eventql_query` is running, the stream returns a `ClientError::HeartbeatTimeout` error. Every other request and stream, as well as waiting for the response of `observe_events` and `run_eventql_query`, fails with a `ClientError::IoError` error whose kind is `std::io::ErrorKind::TimedOut`. Either way, the connection is closed, and a stream ends.
 
+*Note that the stall timeout needs a Tokio runtime with the time driver enabled, which `#[tokio::main]` and `enable_all()` include. If you build the runtime yourself, call `enable_time()`, or every request panics.*
+
 ### Writing Events
 
 Call the `write_events` function and hand over a vector with one or more events. You do not have to provide all event fields – some are automatically added by the server.
