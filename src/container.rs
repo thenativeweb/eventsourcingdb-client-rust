@@ -40,18 +40,23 @@ use ed25519_dalek::{
     pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
 };
 use rand::prelude::ThreadRng;
+use std::time::Duration;
+
 use testcontainers::{
-    ContainerAsync, CopyDataSource, GenericImage,
-    core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
+    ContainerAsync, CopyDataSource, GenericImage, TestcontainersError,
+    core::{ContainerPort, ImageExt, error::WaitContainerError},
     runners::AsyncRunner,
 };
+use tokio::time::{Instant, sleep};
 use url::{Host, Url};
 
 use crate::{client::Client, error::ContainerError};
 
 /// How long starting the container may take until EventSourcingDB answers, which is generous, since a busy Docker
 /// may take far longer than usual to start a container
-const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait between two attempts to reach EventSourcingDB while the container starts
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Builder for the [Container].
 ///
@@ -146,13 +151,10 @@ impl ContainerBuilder {
             "--http-port",
             &http_port,
         ];
+        // The container is ready once EventSourcingDB answers, which wait_until_ready waits for, instead of the
+        // HTTP wait of testcontainers, which looks up the mapped port only once.
         let mut test_container = GenericImage::new(self.image_name, self.image_tag)
             .with_exposed_port(self.internal_port)
-            .with_wait_for(WaitFor::Http(Box::new(
-                HttpWaitStrategy::new("/api/v1/ping")
-                    .with_port(self.internal_port)
-                    .with_expected_status_code(200u16),
-            )))
             .with_startup_timeout(STARTUP_TIMEOUT);
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
@@ -165,6 +167,7 @@ impl ContainerBuilder {
             );
         }
         let instance = test_container.with_cmd(cmd_args).start().await?;
+        wait_until_ready(&instance, self.internal_port).await?;
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
@@ -172,6 +175,39 @@ impl ContainerBuilder {
             signing_key: self.signing_key,
             instance,
         })
+    }
+}
+
+/// Waits until EventSourcingDB in the container answers a ping, for at most the startup timeout.
+///
+/// Docker may report the port that it maps the port of the container to only a while after it started the container,
+/// especially when it is busy, so looking up the port is repeated as well as the ping.
+async fn wait_until_ready(
+    instance: &ContainerAsync<GenericImage>,
+    internal_port: ContainerPort,
+) -> Result<(), ContainerError> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let client = reqwest::Client::builder()
+        .timeout(POLL_INTERVAL * 10)
+        .build()
+        .map_err(|error| TestcontainersError::other(error.to_string()))?;
+
+    loop {
+        if let Ok(host_port) = instance.get_host_port_ipv4(internal_port).await {
+            let host = instance.get_host().await?;
+            let is_ready = client
+                .get(format!("http://{host}:{host_port}/api/v1/ping"))
+                .send()
+                .await
+                .is_ok_and(|response| response.status().is_success());
+            if is_ready {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(TestcontainersError::from(WaitContainerError::StartupTimeout).into());
+        }
+        sleep(POLL_INTERVAL).await;
     }
 }
 
