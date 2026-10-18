@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use super::{
-    http::{Answer, Http, is_from_eventsourcingdb, stream_ended_unexpectedly},
+    http::{Http, is_from_eventsourcingdb, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -252,14 +252,13 @@ fn end_after_failure<T>(
 /// # Errors
 /// Returns a [`DbApiError`] with the status and the text of the response if it does not report success, with the code
 /// of the v2 API that clearly matches if it is from EventSourcingDB, and [`ClientError::InvalidServerHeader`] if the
-/// response is not from EventSourcingDB, but reports success, or answers a request for a stream.
+/// response is not from EventSourcingDB, but reports success.
 async fn send<R: ClientRequest>(
     http: &Http,
     endpoint: &R,
-    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let request = build(http, endpoint)?;
-    send_request(http, endpoint, request, answer).await
+    send_request(http, endpoint, request).await
 }
 
 /// Builds the request, which sends nothing yet.
@@ -273,7 +272,6 @@ async fn send_request<R: ClientRequest>(
     http: &Http,
     endpoint: &R,
     request: reqwest::Request,
-    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let response = http.send(request).await?;
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
@@ -284,9 +282,6 @@ async fn send_request<R: ClientRequest>(
         } else {
             Err(ClientError::InvalidServerHeader)
         };
-    }
-    if !is_from_eventsourcingdb && answer == Answer::Stream {
-        return Err(ClientError::InvalidServerHeader);
     }
 
     let status = response.status();
@@ -319,7 +314,7 @@ async fn read_oneshot<R: OneShotRequest>(
     endpoint: &R,
     request: reqwest::Request,
 ) -> Result<R::Response, ClientError> {
-    let response = send_request(http, endpoint, request, Answer::Single).await?;
+    let response = send_request(http, endpoint, request).await?;
     let result = http.read_json(response).await?;
     endpoint.validate_response(&result)?;
     Ok(result)
@@ -355,7 +350,7 @@ async fn request_streaming<R: StreamingRequest>(
     http: &Http,
     endpoint: R,
 ) -> Result<BoxStream<'static, Result<R::ItemType, ClientError>>, ClientError> {
-    let response = send(http, &endpoint, Answer::Stream).await?;
+    let response = send(http, &endpoint).await?;
     Ok(R::build_stream(http, response))
 }
 

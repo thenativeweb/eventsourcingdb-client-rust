@@ -100,7 +100,7 @@ match client.write_events(events, preconditions).await {
 }
 ```
 
-*Note that an error answer that is not from EventSourcingDB, such as one of a proxy in front of it, is a `ClientError::DbApiError` error as well, with its status and text and without a code. For a request that returns a stream, such an answer is a `ClientError::InvalidServerHeader` error, as is every answer that reports success, but is not from EventSourcingDB.*
+*Note that an error answer that is not from EventSourcingDB, such as one of a proxy in front of it, is a `ClientError::DbApiError` error as well, with its status and text and without a code. An answer that reports success, but is not from EventSourcingDB, is a `ClientError::InvalidServerHeader` error.*
 
 *Note that servers without the v2 API report errors without codes. The client assigns the codes of the v2 API to those errors that clearly match one, such as a precondition that does not hold, and leaves the code of every other error empty.*
 
@@ -766,6 +766,16 @@ Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offe
   ```
 
 - `ClientError::InvalidRequestMethod` is removed, since no request fails with it.
+
+- An error answer to a request that returns a stream, such as `read_events`, whose `Server` header does not name EventSourcingDB, for example one of a proxy in front of it, is a `ClientError::DbApiError` error with its status and text and without a code, as it already was for every other request. Before, it was a `ClientError::InvalidServerHeader` error:
+
+  ```rust
+  // Before
+  Err(ClientError::InvalidServerHeader) => // ...
+
+  // After
+  Err(ClientError::DbApiError(error)) => // error.status, error.description
+  ```
 
 - `ClientError`, `EventError`, and `ContainerError` are `#[non_exhaustive]`, so a `match` on them needs an arm for all other variants:
 

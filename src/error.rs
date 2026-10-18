@@ -84,9 +84,9 @@ impl From<std::io::Error> for ClientError {
 /// An error that the DB reported.
 ///
 /// This is every error that comes from the DB itself: an error the DB answers with a status other than `200`, and an
-/// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer. A
-/// request that expects a single answer reports an error answer that is not from the DB, such as one of a proxy in
-/// front of it, the same way, with its status and text and without a code.
+/// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer. An
+/// error answer that is not from the DB, such as one of a proxy in front of it, is reported the same way, with its
+/// status and text and without a code.
 ///
 /// ```
 /// use eventsourcingdb::error::{ClientError, code};

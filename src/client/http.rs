@@ -67,15 +67,6 @@ impl http_body::Body for RecordingBody {
     }
 }
 
-/// What a request expects as its answer, which decides how an error answer that is not from EventSourcingDB is
-/// reported: for a single answer as a [`DbApiError`] with its status and text, and for a stream as
-/// [`ClientError::InvalidServerHeader`], as before the v2 API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Answer {
-    Single,
-    Stream,
-}
-
 /// The HTTP method `QUERY` (RFC 10008), which the v2 API reads with
 pub fn query() -> Method {
     Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method")

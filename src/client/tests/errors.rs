@@ -425,20 +425,29 @@ async fn a_success_answer_that_is_not_from_eventsourcingdb_is_an_invalid_server_
 }
 
 #[tokio::test]
-async fn an_answer_to_a_stream_that_is_not_from_eventsourcingdb_is_an_invalid_server_header() {
+async fn an_error_answer_of_a_proxy_to_a_stream_is_a_db_api_error_without_a_code() {
     for api in BOTH_APIS {
-        for status in [200, 502] {
-            let error = fail_with(
-                api,
-                proxy_answer(status, "bad gateway\n"),
-                |client| async move { client.read_events("/test", None).await.map(|_| ()) },
-            )
-            .await;
-            assert!(
-                matches!(error, ClientError::InvalidServerHeader),
-                "Expected an invalid server header, but got {error:?}"
+        for (status, text) in [(405, "Method Not Allowed\n"), (502, "bad gateway\n")] {
+            let error = db_api_error(
+                fail_with(api, proxy_answer(status, text), |client| async move {
+                    client.read_events("/test", None).await.map(|_| ())
+                })
+                .await,
             );
+            assert_eq!(error.status, status);
+            assert_eq!(error.description, text.trim_end());
+            assert_eq!(error.code, "");
         }
+
+        // A success answer that is not from EventSourcingDB still is an invalid server header.
+        let error = fail_with(api, proxy_answer(200, "{}\n"), |client| async move {
+            client.read_events("/test", None).await.map(|_| ())
+        })
+        .await;
+        assert!(
+            matches!(error, ClientError::InvalidServerHeader),
+            "Expected an invalid server header, but got {error:?}"
+        );
     }
 }
 

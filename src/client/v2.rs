@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value, value::RawValue};
 
 use super::{
-    http::{Answer, Http, is_from_eventsourcingdb, query, stream_ended_unexpectedly},
+    http::{Http, is_from_eventsourcingdb, query, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -157,24 +157,21 @@ pub fn is_event_envelope(envelope: &Envelope) -> bool {
 ///
 /// # Errors
 /// Returns a [`DbApiError`] with the status and the text of the response if its status is not `200`, and
-/// [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, but reports success, or answers
-/// a request for a stream.
+/// [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, but reports success.
 async fn send<T: Serialize + ?Sized>(
     http: &Http,
     method: Method,
     path: &str,
     body: Option<&T>,
-    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let request = http.request(method, path, body)?;
-    send_request(http, request, answer).await
+    send_request(http, request).await
 }
 
 /// Sends the request that was built already, and checks the response as [`send`] does.
 async fn send_request(
     http: &Http,
     request: reqwest::Request,
-    answer: Answer,
 ) -> Result<reqwest::Response, ClientError> {
     let response = http.send(request).await?;
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
@@ -185,9 +182,6 @@ async fn send_request(
         } else {
             Err(ClientError::InvalidServerHeader)
         };
-    }
-    if !is_from_eventsourcingdb && answer == Answer::Stream {
-        return Err(ClientError::InvalidServerHeader);
     }
     Err(http.transport_error(response).await.into())
 }
@@ -200,7 +194,7 @@ async fn request_single<T: DeserializeOwned, B: Serialize + ?Sized>(
     body: Option<&B>,
     item_type: &str,
 ) -> Result<T, ClientError> {
-    let response = send(http, method, path, body, Answer::Single).await?;
+    let response = send(http, method, path, body).await?;
     let envelope: Envelope = http.read_json(response).await?;
     parse_envelope(&envelope, item_type)
 }
@@ -249,7 +243,7 @@ async fn request_streaming<T: DeserializeOwned + Send + 'static, B: Serialize + 
     body: Option<&B>,
     item_type: &'static str,
 ) -> Result<BoxStream<'static, Result<T, ClientError>>, ClientError> {
-    let response = send(http, query(), path, body, Answer::Stream).await?;
+    let response = send(http, query(), path, body).await?;
     Ok(request_items(http, response, item_type))
 }
 
@@ -288,7 +282,7 @@ pub async fn write_events(
         http.write_request(Method::POST, "/api/v2/data/write-events", &body)?;
 
     let writing = async {
-        let response = send_request(http, request, Answer::Single).await?;
+        let response = send_request(http, request).await?;
         request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await
@@ -326,7 +320,7 @@ pub async fn register_event_schema(
         http.write_request(Method::POST, "/api/v2/data/register-event-schema", &body)?;
 
     let registering = async {
-        let response = send_request(http, request, Answer::Single).await?;
+        let response = send_request(http, request).await?;
         let mut events: Vec<ManagementEvent> = request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await?;
