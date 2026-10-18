@@ -205,8 +205,9 @@ async fn wait_until_ready(
                 return Ok(());
             }
         }
-        // A container that exited never becomes ready, so waiting longer is pointless.
-        if let Some(exit_code) = instance.exit_code().await? {
+        // A container that exited never becomes ready, so waiting longer is pointless. A busy Docker may fail to tell,
+        // which is retried as a failed lookup of the port is.
+        if let Ok(Some(exit_code)) = instance.exit_code().await {
             return Err(exited_error(instance, exit_code).await.into());
         }
         if Instant::now() >= deadline {
