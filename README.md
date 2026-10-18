@@ -48,6 +48,24 @@ if let Err(err) = result {
 }
 ```
 
+### Detecting Stalled Connections
+
+A request fails once nothing at all has arrived from the server for 30 seconds, from sending it until its end, including connecting and waiting for the response. Everything that arrives restarts the 30 seconds: every part of a response, every event, row, and heartbeat. This is not a total duration, so a long stream that keeps receiving events or heartbeats is never cut off.
+
+To use another duration, create the client with the `builder` function and call `stall_timeout`:
+
+```rust
+use std::time::Duration;
+
+// ...
+
+let client = Client::builder(base_url, api_token)
+  .stall_timeout(Duration::from_secs(10))
+  .build();
+```
+
+If the server stalls while the stream of `observe_events` or `run_eventql_query` is running, the stream returns a `ClientError::HeartbeatTimeout` error. Every other request and stream, as well as waiting for the response of `observe_events` and `run_eventql_query`, fails with a `ClientError::IoError` error whose kind is `std::io::ErrorKind::TimedOut`. Either way, the connection is closed, and a stream ends.
+
 ### Writing Events
 
 Call the `write_events` function and hand over a vector with one or more events. You do not have to provide all event fields – some are automatically added by the server.
@@ -281,7 +299,7 @@ match result {
 
 *Note that each row returned by the stream is of type `serde_json::Value` and matches the projection specified in your query.*
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
+*Note that EventSourcingDB sends a heartbeat every second while there are no rows to send. If neither a row nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
 
 ### Converting Events to Polars DataFrame
 
@@ -359,7 +377,7 @@ match result {
 }
 ```
 
-*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for 30 seconds, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends.*
+*Note that EventSourcingDB sends a heartbeat every second while there are no events to send. If neither an event nor a heartbeat arrives for the stall timeout, which is 30 seconds by default, for example because the connection stalled, the stream returns a `ClientError::HeartbeatTimeout` error, closes the connection, and ends. For details, see [Detecting Stalled Connections](#detecting-stalled-connections).*
 
 #### Observing From Subjects Recursively
 

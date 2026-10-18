@@ -52,8 +52,9 @@ pub enum ClientError {
     /// The server header is invalid
     #[error("Server must be EventSourcingDB")]
     InvalidServerHeader,
-    /// Neither an event nor a heartbeat arrived on a stream for 30 seconds
-    #[error("No event and no heartbeat arrived for 30 seconds")]
+    /// Neither an event nor a heartbeat arrived on a stream with heartbeats for the stall timeout, which is 30 seconds by
+    /// default, see [`crate::client::ClientBuilder::stall_timeout`]
+    #[error("No event and no heartbeat arrived for the stall timeout")]
     HeartbeatTimeout,
 }
 
