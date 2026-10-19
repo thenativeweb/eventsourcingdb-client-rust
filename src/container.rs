@@ -40,11 +40,12 @@ use ed25519_dalek::{
     pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
 };
 use rand::prelude::ThreadRng;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use testcontainers::{
     ContainerAsync, CopyDataSource, GenericImage, TestcontainersError,
-    core::{ContainerPort, ImageExt, error::WaitContainerError},
+    bollard::query_parameters::{ListContainersOptions, RemoveContainerOptions},
+    core::{ContainerPort, ImageExt, client::docker_client_instance, error::WaitContainerError},
     runners::AsyncRunner,
 };
 use tokio::time::{Instant, sleep};
@@ -57,6 +58,12 @@ use crate::{client::Client, error::ContainerError};
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long to wait between two attempts to reach EventSourcingDB while the container starts
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// The label whose value names the start that created a container, so that the containers of a start that failed
+/// can be found and removed
+const START_LABEL: &str = "io.eventsourcingdb.container-start";
+
+#[cfg(test)]
+mod tests;
 
 /// Builder for the [Container].
 ///
@@ -79,6 +86,7 @@ pub struct ContainerBuilder {
     internal_port: ContainerPort,
     api_token: String,
     signing_key: Option<SigningKey>,
+    startup_timeout: Duration,
 }
 
 impl Default for ContainerBuilder {
@@ -89,6 +97,7 @@ impl Default for ContainerBuilder {
             internal_port: ContainerPort::Tcp(3000),
             api_token: "secret".to_string(),
             signing_key: None,
+            startup_timeout: STARTUP_TIMEOUT,
         }
     }
 }
@@ -141,6 +150,13 @@ impl ContainerBuilder {
     /// This function will return an error if the container could not be started, if EventSourcingDB does not answer
     /// within 60 seconds, and at once if the container exits before, naming its exit code and its last output.
     pub async fn start(self) -> Result<Container, ContainerError> {
+        // Every start gets an ID of its own, which labels its container.
+        let start_id = format!("{:032x}", rand::random::<u128>());
+        self.start_with_id(&start_id).await
+    }
+
+    /// Starts the test container as [`ContainerBuilder::start`] does, and labels it with the given ID of the start.
+    async fn start_with_id(self, start_id: &str) -> Result<Container, ContainerError> {
         let http_port = self.internal_port.as_u16().to_string();
         let mut cmd_args = vec![
             "run",
@@ -156,7 +172,8 @@ impl ContainerBuilder {
         // HTTP wait of testcontainers, which looks up the mapped port only once.
         let mut test_container = GenericImage::new(self.image_name, self.image_tag)
             .with_exposed_port(self.internal_port)
-            .with_startup_timeout(STARTUP_TIMEOUT);
+            .with_label(START_LABEL, start_id)
+            .with_startup_timeout(self.startup_timeout);
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
             cmd_args.push("--signing-key-file=/tmp/signing_key.pem");
@@ -167,8 +184,15 @@ impl ContainerBuilder {
                 )),
             );
         }
-        let instance = test_container.with_cmd(cmd_args).start().await?;
-        wait_until_ready(&instance, self.internal_port).await?;
+        let instance = match test_container.with_cmd(cmd_args).start().await {
+            Ok(instance) => instance,
+            Err(error) => {
+                return Err(remove_containers_of_failed_start(start_id, error)
+                    .await
+                    .into());
+            }
+        };
+        wait_until_ready(&instance, self.internal_port, self.startup_timeout).await?;
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
@@ -179,6 +203,54 @@ impl ContainerBuilder {
     }
 }
 
+/// Removes the containers of a start that failed, and returns the error it failed with.
+///
+/// Testcontainers creates the container before it starts it, but owns it only once it started, so a start that fails
+/// in between, for example since it runs into the startup timeout, leaves the container behind. So the containers of
+/// the start are found by its label and removed. If that fails as well, the error names both failures.
+async fn remove_containers_of_failed_start(
+    start_id: &str,
+    error: TestcontainersError,
+) -> TestcontainersError {
+    match remove_containers_of_start(start_id).await {
+        Ok(()) => error,
+        Err(removal_error) => TestcontainersError::other(format!(
+            "{error}, and removing the container of the failed start failed: {removal_error}"
+        )),
+    }
+}
+
+/// Removes every container that carries the label of the given start, whether it runs or not.
+async fn remove_containers_of_start(start_id: &str) -> Result<(), TestcontainersError> {
+    let docker = docker_client_instance().await?;
+    let containers = docker
+        .list_containers(Some(ListContainersOptions {
+            all: true,
+            filters: Some(HashMap::from([(
+                "label".to_string(),
+                vec![format!("{START_LABEL}={start_id}")],
+            )])),
+            ..Default::default()
+        }))
+        .await
+        .map_err(TestcontainersError::other)?;
+
+    for id in containers.into_iter().filter_map(|container| container.id) {
+        docker
+            .remove_container(
+                &id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(TestcontainersError::other)?;
+    }
+    Ok(())
+}
+
 /// Waits until EventSourcingDB in the container answers a ping, for at most the startup timeout.
 ///
 /// Docker may report the port that it maps the port of the container to only a while after it started the container,
@@ -186,8 +258,9 @@ impl ContainerBuilder {
 async fn wait_until_ready(
     instance: &ContainerAsync<GenericImage>,
     internal_port: ContainerPort,
+    startup_timeout: Duration,
 ) -> Result<(), ContainerError> {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let deadline = Instant::now() + startup_timeout;
     let client = reqwest::Client::builder()
         .timeout(POLL_INTERVAL * 10)
         .build()
