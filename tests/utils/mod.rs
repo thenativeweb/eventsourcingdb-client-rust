@@ -1,3 +1,6 @@
+// Every test binary uses only some of the helpers.
+#![allow(dead_code)]
+
 use chrono::{TimeDelta, Utc};
 use eventsourcingdb::{
     Event, EventCandidate, TraceInfo,
