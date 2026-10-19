@@ -91,6 +91,13 @@ async fn remove_containers_of(attempt_id: &str) -> usize {
                 }),
             )
             .await
+            .or_else(|error| {
+                if super::is_removed_already(&error) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            })
             .expect("Failed to remove a container");
     }
     containers.len()
@@ -185,12 +192,16 @@ impl TestDocker {
             .clone()
     }
 
-    /// Removes the containers of every attempt, and returns how many there were, so that the test leaves nothing
-    /// behind even if the start does.
+    /// Waits until the containers of every attempt are removed, for the guard timeout at most, since a busy Docker may
+    /// finish a container only after its attempt stopped waiting for it, which the background then removes. Then it
+    /// removes what is left, and returns how many containers that were, so that the test leaves nothing behind even if
+    /// the start does.
     async fn remove_left_behind(&self) -> usize {
         let mut left_behind = 0;
         for attempt_id in self.attempt_ids() {
-            left_behind += remove_containers_of(&attempt_id).await;
+            if !eventually_removed(&attempt_id).await {
+                left_behind += remove_containers_of(&attempt_id).await;
+            }
         }
         left_behind
     }
@@ -526,18 +537,15 @@ async fn replaces_a_container_in_which_the_database_does_not_become_reachable() 
         .start_with(Arc::clone(&docker))
         .await;
     let attempt_ids = docker.attempt_ids();
-    let mut left_behind = Vec::new();
+    let mut is_removed = true;
     for attempt_id in &attempt_ids[..2] {
-        left_behind.extend(containers_of(attempt_id).await);
+        is_removed &= eventually_removed(attempt_id).await;
     }
 
     let container = result.expect("Expected the third container to start");
     assert_eq!(attempt_ids.len(), 3);
     assert!(attempt_ids[0] != attempt_ids[1] && attempt_ids[1] != attempt_ids[2]);
-    assert!(
-        left_behind.is_empty(),
-        "Expected the replaced containers to be removed"
-    );
+    assert!(is_removed, "Expected the replaced containers to be removed");
 
     // The container that replaced the others signs events too, so it got the signing key as well.
     let client = container
@@ -595,9 +603,9 @@ async fn gives_up_after_3_containers_in_which_the_database_does_not_become_reach
             .start_with(Arc::clone(&docker))
             .await;
         let elapsed = started_at.elapsed();
-        let mut left_behind = Vec::new();
+        let mut is_removed = true;
         for attempt_id in docker.attempt_ids() {
-            left_behind.extend(containers_of(&attempt_id).await);
+            is_removed &= eventually_removed(&attempt_id).await;
         }
         let removed_by_test = docker.remove_left_behind().await;
 
@@ -613,10 +621,7 @@ async fn gives_up_after_3_containers_in_which_the_database_does_not_become_reach
             )
         );
         assert_eq!(docker.attempt_ids().len(), 3);
-        assert!(
-            left_behind.is_empty(),
-            "Expected every container to be removed"
-        );
+        assert!(is_removed, "Expected every container to be removed");
         assert_eq!(removed_by_test, 0);
         // Each container got the startup timeout that was set, and not the default.
         assert!(elapsed >= startup_timeout * 3);
@@ -632,7 +637,7 @@ async fn fails_at_once_if_the_container_exits_and_names_the_end_of_its_log() {
 
     let result = builder().start_with(Arc::clone(&docker)).await;
     let attempt_ids = docker.attempt_ids();
-    let left_behind = containers_of(&attempt_ids[0]).await;
+    let is_removed = eventually_removed(&attempt_ids[0]).await;
     let removed_by_test = docker.remove_left_behind().await;
 
     let error = result.expect_err("Expected the container to exit");
@@ -649,10 +654,7 @@ async fn fails_at_once_if_the_container_exits_and_names_the_end_of_its_log() {
     assert_eq!(log_tail.lines().count(), 20);
     assert!(log_tail.contains("--http-port"), "{log_tail}");
     assert_eq!(attempt_ids.len(), 1);
-    assert!(
-        left_behind.is_empty(),
-        "Expected the container to be removed"
-    );
+    assert!(is_removed, "Expected the container to be removed");
     assert_eq!(removed_by_test, 0);
 }
 
@@ -717,7 +719,7 @@ async fn fails_at_once_with_the_error_of_docker_if_docker_fails_to_start_a_conta
 
     let result = builder().start_with(Arc::clone(&docker)).await;
     let attempt_ids = docker.attempt_ids();
-    let left_behind = containers_of(&attempt_ids[0]).await;
+    let is_removed = eventually_removed(&attempt_ids[0]).await;
     let removed_by_test = docker.remove_left_behind().await;
 
     let error = result.expect_err("Expected Docker to fail");
@@ -729,10 +731,7 @@ async fn fails_at_once_with_the_error_of_docker_if_docker_fails_to_start_a_conta
         format!("failed to start the container: {docker_error}")
     );
     assert_eq!(attempt_ids.len(), 1);
-    assert!(
-        left_behind.is_empty(),
-        "Expected the container to be removed"
-    );
+    assert!(is_removed, "Expected the container to be removed");
     assert_eq!(removed_by_test, 0);
 }
 
@@ -913,6 +912,63 @@ async fn a_start_that_is_cancelled_while_docker_creates_the_container_leaves_no_
     assert_eq!(removed_by_test, 0);
 }
 
+#[test]
+fn a_start_that_is_cancelled_while_docker_creates_the_container_leaves_no_container_behind_once_its_runtime_ends()
+ {
+    let creating = Arc::new(Notify::new());
+    let docker = Arc::new(TestDocker::new({
+        let creating = Arc::clone(&creating);
+        move |_, request| {
+            creating.notify_one();
+            request.start()
+        }
+    }));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to build a runtime");
+    runtime.block_on(async {
+        tokio::select! {
+            _ = builder().start_with(Arc::clone(&docker)) => panic!("Expected the start to be cancelled"),
+            () = async {
+                creating.notified().await;
+                sleep(Duration::from_millis(20)).await;
+            } => {}
+        }
+    });
+    // The runtime ends right after the start was cancelled, as the runtime of a test does once the test ends.
+    drop(runtime);
+
+    let checking = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to build a runtime");
+    let attempt_ids = docker.attempt_ids();
+    let (is_finished, is_removed, removed_by_test) = checking.block_on(async {
+        let is_finished = timeout(GUARD_TIMEOUT, async {
+            while docker.finished_starts() == 0 {
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .is_ok();
+        let is_removed = eventually_removed(&attempt_ids[0]).await;
+        (is_finished, is_removed, docker.remove_left_behind().await)
+    });
+
+    assert_eq!(attempt_ids.len(), 1);
+    assert!(
+        is_removed,
+        "Expected the container of the cancelled start to be removed after its runtime ended"
+    );
+    assert!(
+        is_finished,
+        "Expected Docker to finish the container after the runtime of the start ended"
+    );
+    assert_eq!(removed_by_test, 0);
+}
+
 #[tokio::test]
 async fn names_a_failed_removal_on_a_line_of_its_own_after_the_error_of_the_start() {
     let docker = Arc::new(
@@ -1007,7 +1063,7 @@ async fn starts_a_container_that_replaces_one_that_docker_fails_to_remove() {
         .start_with(Arc::clone(&docker))
         .await;
     let attempt_ids = docker.attempt_ids();
-    let left_behind = containers_of(&attempt_ids[0]).await;
+    let is_removed = eventually_removed(&attempt_ids[0]).await;
 
     let container = result.expect("Expected the second container to start");
     container
@@ -1016,8 +1072,5 @@ async fn starts_a_container_that_replaces_one_that_docker_fails_to_remove() {
         .expect("Failed to stop the container");
     assert_eq!(docker.remove_left_behind().await, 0);
     assert_eq!(attempt_ids.len(), 2);
-    assert!(
-        left_behind.is_empty(),
-        "Expected the replaced container to be removed"
-    );
+    assert!(is_removed, "Expected the replaced container to be removed");
 }

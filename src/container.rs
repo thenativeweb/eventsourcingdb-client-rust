@@ -42,7 +42,14 @@ use ed25519_dalek::{
 use futures::StreamExt;
 use rand::prelude::ThreadRng;
 use reqwest::StatusCode;
-use std::{collections::HashMap, future::Future, pin::pin, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::{Future, pending},
+    pin::pin,
+    sync::{Arc, OnceLock},
+    thread,
+    time::Duration,
+};
 
 use testcontainers::{
     ContainerAsync, ContainerRequest, CopyDataSource, GenericImage, Image, TestcontainersError,
@@ -53,10 +60,12 @@ use testcontainers::{
     core::{
         ContainerPort, ImageExt,
         client::{ClientError, docker_client_instance},
+        error::WaitContainerError,
     },
     runners::AsyncRunner,
 };
 use tokio::{
+    runtime::{Builder, Handle},
     sync::oneshot,
     time::{Instant, sleep, timeout, timeout_at},
 };
@@ -72,6 +81,9 @@ pub(crate) const START_ATTEMPTS: usize = 3;
 /// How long an attempt whose time ran out while Docker still creates or starts its container waits for Docker to
 /// finish, so that it can remove the container, before it leaves removing it to the background
 const CREATE_GRACE_PERIOD: Duration = Duration::from_secs(5);
+/// How long the background waits for Docker to finish a container beyond the time that its attempt waits for it,
+/// before it stops waiting and removes what carries the label of the attempt
+const BACKGROUND_GRACE_PERIOD: Duration = Duration::from_secs(60);
 /// How long to wait between two attempts to reach EventSourcingDB while the container starts
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long a ping waits for its answer
@@ -190,9 +202,11 @@ impl ContainerBuilder {
     /// in total.
     ///
     /// Every container whose start fails is removed, unless testcontainers is told to keep containers with
-    /// `TESTCONTAINERS_COMMAND=keep`. A failed removal that no error can name, since a later container started, or
-    /// since it happens in the background once Docker finished a container that the start gave up on, is logged as a
-    /// warning through the [`log`](https://docs.rs/log) crate, which shows it only if a logger is installed.
+    /// `TESTCONTAINERS_COMMAND=keep`. A container that Docker finishes only after the start gave up on it, or after
+    /// the start was cancelled, is removed on a thread of its own once Docker is done, even if the runtime of the start
+    /// ended by then, but not if the process exits. A failed removal that no error can name, since a later container
+    /// started, or since it happens on that thread, is logged as a warning through the [`log`](https://docs.rs/log)
+    /// crate, which shows it only if a logger is installed.
     ///
     /// # Errors
     /// This function returns [`ContainerError::Unreachable`] if EventSourcingDB does not answer in any of the 3
@@ -271,7 +285,12 @@ impl ContainerBuilder {
 
         // The time of the attempt starts once Docker is about to create the container.
         let deadline = Instant::now() + self.startup_timeout;
-        let mut started = start_in_background(Arc::clone(docker), request, attempt_id.clone());
+        let mut started = start_in_background(
+            Arc::clone(docker),
+            request,
+            attempt_id.clone(),
+            self.startup_timeout + CREATE_GRACE_PERIOD + BACKGROUND_GRACE_PERIOD,
+        );
 
         let instance = match timeout_at(deadline, &mut started).await {
             Ok(Ok(Ok(instance))) => instance,
@@ -447,14 +466,21 @@ async fn provide_image(image: GenericImage) -> Result<(), TestcontainersError> {
 /// attempt nor a start that is cancelled cuts the calls to Docker short, since Docker might then create the container
 /// only after it was looked for to remove it. If nobody waits for the container any longer once Docker is done, the
 /// task removes it.
+///
+/// The task runs on the runtime for starting containers, so that it goes on once the runtime of the start ends, as the
+/// runtime of a test does at the end of the test. It waits for Docker for the given time at most, which is longer than
+/// the attempt may wait for it.
 fn start_in_background<D: Docker>(
     docker: Arc<D>,
     request: ContainerRequest<GenericImage>,
     attempt_id: String,
+    time_limit: Duration,
 ) -> oneshot::Receiver<Result<ContainerAsync<GenericImage>, TestcontainersError>> {
     let (sender, receiver) = oneshot::channel();
-    drop(tokio::spawn(async move {
-        let started = docker.start(request).await;
+    drop(start_runtime().spawn(async move {
+        let started = timeout(time_limit, docker.start(request))
+            .await
+            .unwrap_or_else(|_| Err(WaitContainerError::StartupTimeout.into()));
         if let Err(started) = sender.send(started) {
             // As nobody waits for this, it logs what fails.
             if let Err(error) = remove_attempt(&*docker, started.ok(), &attempt_id).await {
@@ -463,6 +489,23 @@ fn start_in_background<D: Docker>(
         }
     }));
     receiver
+}
+
+/// Returns the runtime for starting containers, which runs on a thread of its own as long as the process does.
+fn start_runtime() -> &'static Handle {
+    static START_RUNTIME: OnceLock<Handle> = OnceLock::new();
+    START_RUNTIME.get_or_init(|| {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build the runtime for starting containers");
+        let handle = runtime.handle().clone();
+        let _thread = thread::Builder::new()
+            .name("eventsourcingdb-container-start".to_string())
+            .spawn(move || runtime.block_on(pending::<()>()))
+            .expect("Failed to spawn the thread for starting containers");
+        handle
+    })
 }
 
 /// Removes the containers of an attempt that failed as the given failure says.
@@ -548,15 +591,27 @@ async fn remove_containers_of_attempt(attempt_id: &str) -> Result<(), Testcontai
             )
             .await;
         match removed {
-            // A container that is gone already needs no removal.
-            Ok(())
-            | Err(BollardError::DockerResponseServerError {
-                status_code: 404, ..
-            }) => {}
+            Ok(()) => {}
+            Err(error) if is_removed_already(&error) => {}
             Err(error) => return Err(ClientError::RemoveContainer(error).into()),
         }
     }
     Ok(())
+}
+
+/// Tells whether removing a container failed only since the container is gone already, or since Docker removes it
+/// already, which a removal that runs in the background at the same time may cause.
+fn is_removed_already(error: &BollardError) -> bool {
+    match error {
+        BollardError::DockerResponseServerError {
+            status_code: 404, ..
+        } => true,
+        BollardError::DockerResponseServerError {
+            status_code: 409,
+            message,
+        } => message.contains("already in progress"),
+        _ => false,
+    }
 }
 
 /// What waiting for EventSourcingDB asks Docker about a container, which the tests replace
