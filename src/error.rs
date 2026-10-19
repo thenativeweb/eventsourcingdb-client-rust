@@ -16,50 +16,37 @@ use crate::client::stall_timeout::is_stalled;
 ///
 /// It is [`Clone`], so that the same error can reach every request that waits for it, which is why the errors of
 /// other crates that are not [`Clone`] are in an [`Arc`].
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ClientError {
     /// An IO Error occurred, which is in an [`Arc`], so that the error can be cloned
-    #[error("An IO error occurred: {0}")]
-    IoError(#[source] Arc<std::io::Error>),
+    IoError(Arc<std::io::Error>),
     /// The provided event type is invalid
-    #[error("The provided event type is invalid")]
     InvalidEventType,
     /// The provided API token is invalid
-    #[error("The provided API token is invalid")]
     APITokenInvalid,
     /// There was a generic problem with pinging the DB
-    #[error("Pinging the DB failed")]
     PingFailed,
     /// There was a problem making a request to the DB, which is in an [`Arc`], so that the error can be cloned
-    #[error("The request failed with error: {0}")]
-    ReqwestError(#[source] Arc<reqwest::Error>),
+    ReqwestError(Arc<reqwest::Error>),
     /// There was a problem parsing the URL
-    #[error("The URL is invalid: {0}")]
-    URLParseError(#[from] url::ParseError),
+    URLParseError(url::ParseError),
     /// There was a problem with the JSON serialization, which is in an [`Arc`], so that the error can be cloned
-    #[error("The JSON serialization failed: {0}")]
-    SerdeJsonError(#[source] Arc<serde_json::Error>),
+    SerdeJsonError(Arc<serde_json::Error>),
     /// The DB reported an error, see [`DbApiError`]
-    #[error(transparent)]
-    DbApiError(#[from] DbApiError),
+    DbApiError(DbApiError),
     // check if this can hold a validation error in the future
     /// The passed jsonschema is invalid
-    #[error("The passed jsonschema is invalid")]
     JsonSchemaError,
     /// There was a problem with the `cloudevents` message, which is in an [`Arc`], so that the error can be cloned
     #[cfg(feature = "cloudevents")]
-    #[error("The CloudEvents message is invalid: {0}")]
-    CloudeventsMessageError(#[source] Arc<cloudevents::message::Error>),
+    CloudeventsMessageError(Arc<cloudevents::message::Error>),
     /// The database returned an invalid response type
-    #[error("The DB returned an invalid response type: {0}")]
     InvalidResponseType(String),
     /// The server header is invalid, so the answer is not from EventSourcingDB
-    #[error("Server must be EventSourcingDB")]
     InvalidServerHeader,
     /// Nothing at all arrived from the server for the stall timeout, which is 30 seconds by default, see
     /// [`crate::client::ClientBuilder::stall_timeout`]
-    #[error("The connection stalled, since nothing arrived from the server for the stall timeout")]
     ConnectionStalled,
     /// Writing events or registering an event schema failed in a way that leaves open whether the DB stored it
     /// nonetheless, so repeating it may store it twice. It wraps the error the write failed with.
@@ -68,8 +55,76 @@ pub enum ClientError {
     /// example after [`ClientError::ConnectionStalled`], a connection that broke after it was established, a stream
     /// that ended before its end item, or an answer with status `500`. A write fails with its error itself only if it
     /// was certainly not stored: if the connection could not be established at all, or if the DB refused the write.
-    #[error("The outcome of the write is unknown, so it may have been stored: {0}")]
-    OutcomeUnknown(#[source] Box<ClientError>),
+    OutcomeUnknown(Box<ClientError>),
+}
+
+impl fmt::Display for ClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IoError(error) => write!(f, "An IO error occurred: {error}"),
+            Self::InvalidEventType => write!(f, "The provided event type is invalid"),
+            Self::APITokenInvalid => write!(f, "The provided API token is invalid"),
+            Self::PingFailed => write!(f, "Pinging the DB failed"),
+            Self::ReqwestError(error) => write!(f, "The request failed with error: {error}"),
+            Self::URLParseError(error) => write!(f, "The URL is invalid: {error}"),
+            Self::SerdeJsonError(error) => write!(f, "The JSON serialization failed: {error}"),
+            Self::DbApiError(error) => fmt::Display::fmt(error, f),
+            Self::JsonSchemaError => write!(f, "The passed jsonschema is invalid"),
+            #[cfg(feature = "cloudevents")]
+            Self::CloudeventsMessageError(error) => {
+                write!(f, "The CloudEvents message is invalid: {error}")
+            }
+            Self::InvalidResponseType(error) => {
+                write!(f, "The DB returned an invalid response type: {error}")
+            }
+            Self::InvalidServerHeader => write!(f, "Server must be EventSourcingDB"),
+            Self::ConnectionStalled => write!(
+                f,
+                "The connection stalled, since nothing arrived from the server for the stall timeout"
+            ),
+            Self::OutcomeUnknown(error) => write!(
+                f,
+                "The outcome of the write is unknown, so it may have been stored: {error}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ClientError {
+    /// Returns the error that this one wraps: for an error in an [`Arc`], the error inside it, so that it can be
+    /// found by its type along the sources.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IoError(error) => Some(&**error),
+            Self::ReqwestError(error) => Some(&**error),
+            Self::URLParseError(error) => Some(error),
+            Self::SerdeJsonError(error) => Some(&**error),
+            // A DbApiError forwards its source, as a transparent error does.
+            Self::DbApiError(error) => std::error::Error::source(error),
+            #[cfg(feature = "cloudevents")]
+            Self::CloudeventsMessageError(error) => Some(&**error),
+            Self::OutcomeUnknown(error) => Some(&**error),
+            Self::InvalidEventType
+            | Self::APITokenInvalid
+            | Self::PingFailed
+            | Self::JsonSchemaError
+            | Self::InvalidResponseType(_)
+            | Self::InvalidServerHeader
+            | Self::ConnectionStalled => None,
+        }
+    }
+}
+
+impl From<url::ParseError> for ClientError {
+    fn from(error: url::ParseError) -> Self {
+        Self::URLParseError(error)
+    }
+}
+
+impl From<DbApiError> for ClientError {
+    fn from(error: DbApiError) -> Self {
+        Self::DbApiError(error)
+    }
 }
 
 impl From<std::io::Error> for ClientError {
