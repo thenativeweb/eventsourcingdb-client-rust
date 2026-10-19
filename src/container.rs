@@ -190,7 +190,9 @@ impl ContainerBuilder {
     /// in total.
     ///
     /// Every container whose start fails is removed, unless testcontainers is told to keep containers with
-    /// `TESTCONTAINERS_COMMAND=keep`.
+    /// `TESTCONTAINERS_COMMAND=keep`. A failed removal that no error can name, since a later container started, or
+    /// since it happens in the background once Docker finished a container that the start gave up on, is logged as a
+    /// warning through the [`log`](https://docs.rs/log) crate, which shows it only if a logger is installed.
     ///
     /// # Errors
     /// This function returns [`ContainerError::Unreachable`] if EventSourcingDB does not answer in any of the 3
