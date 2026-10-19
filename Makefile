@@ -1,7 +1,7 @@
 qa: analyze test
 
 analyze:
-	@cargo clippy --all-features
+	@cargo clippy --all-features --all-targets
 	@cargo fmt --check
 	@cargo doc --all-features --no-deps --document-private-items
 
