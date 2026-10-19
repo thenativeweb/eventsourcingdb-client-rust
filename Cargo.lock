@@ -992,6 +992,7 @@ dependencies = [
  "http",
  "http-body",
  "jsonschema",
+ "log",
  "polars",
  "rand",
  "reqwest 0.13.5",

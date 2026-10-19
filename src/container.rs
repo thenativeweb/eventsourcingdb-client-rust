@@ -39,27 +39,59 @@ use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
 };
+use futures::StreamExt;
 use rand::prelude::ThreadRng;
-use std::{collections::HashMap, time::Duration};
+use reqwest::StatusCode;
+use std::{
+    collections::HashMap,
+    future::{Future, pending},
+    pin::pin,
+    sync::{Arc, OnceLock},
+    thread,
+    time::Duration,
+};
 
 use testcontainers::{
-    ContainerAsync, CopyDataSource, GenericImage, TestcontainersError,
-    bollard::query_parameters::{ListContainersOptions, RemoveContainerOptions},
-    core::{ContainerPort, ImageExt, client::docker_client_instance, error::WaitContainerError},
+    ContainerAsync, ContainerRequest, CopyDataSource, GenericImage, Image, TestcontainersError,
+    bollard::{
+        errors::Error as BollardError,
+        query_parameters::{ListContainersOptions, LogsOptionsBuilder, RemoveContainerOptions},
+    },
+    core::{
+        ContainerPort, ImageExt,
+        client::{ClientError, docker_client_instance},
+        error::WaitContainerError,
+    },
     runners::AsyncRunner,
 };
-use tokio::time::{Instant, sleep};
+use tokio::{
+    runtime::{Builder, Handle},
+    sync::oneshot,
+    time::{Instant, sleep, timeout, timeout_at},
+};
 use url::{Host, Url};
 
 use crate::{client::Client, error::ContainerError};
 
-/// How long starting the container may take until EventSourcingDB answers, which is generous, since a busy Docker
-/// may take far longer than usual to start a container
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long each container may take by default, from creating it until EventSourcingDB in it answers a ping
+const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+/// How many containers starting the container tries at most, each one replacing the one before, in which
+/// EventSourcingDB did not become reachable in time
+pub(crate) const START_ATTEMPTS: usize = 3;
+/// How long an attempt whose time ran out while Docker still creates or starts its container waits for Docker to
+/// finish, so that it can remove the container, before it leaves removing it to the background
+const CREATE_GRACE_PERIOD: Duration = Duration::from_secs(5);
+/// How long the background waits for Docker to finish a container beyond the time that its attempt waits for it,
+/// before it stops waiting and removes what carries the label of the attempt
+const BACKGROUND_GRACE_PERIOD: Duration = Duration::from_secs(60);
 /// How long to wait between two attempts to reach EventSourcingDB while the container starts
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// The label whose value names the start that created a container, so that the containers of a start that failed
-/// can be found and removed
+/// How long a ping waits for its answer
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
+/// How many lines from the end of its log the error of a container that exited names
+const LOG_TAIL_LINES: usize = 20;
+/// The label whose value names the attempt that created a container, so that the containers of an attempt that
+/// failed can be found and removed
 const START_LABEL: &str = "io.eventsourcingdb.container-start";
 
 #[cfg(test)]
@@ -71,12 +103,14 @@ mod tests;
 ///
 /// By default this container is the same as running this:
 /// ```
+/// # use std::time::Duration;
 /// # use eventsourcingdb::container::Container;
 /// # tokio_test::block_on(async {
 /// let builder = Container::builder()
 ///     .with_image_tag("latest")
 ///     .with_port(3000)
-///     .with_api_token("secret");
+///     .with_api_token("secret")
+///     .with_startup_timeout(Duration::from_secs(30));
 /// # });
 /// ```
 #[derive(Debug, Clone)]
@@ -97,7 +131,7 @@ impl Default for ContainerBuilder {
             internal_port: ContainerPort::Tcp(3000),
             api_token: "secret".to_string(),
             signing_key: None,
-            startup_timeout: STARTUP_TIMEOUT,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
         }
     }
 }
@@ -139,24 +173,201 @@ impl ContainerBuilder {
         self
     }
 
+    /// Set how long each container may take to start, from creating it until EventSourcingDB in it answers a ping,
+    /// which is 30 seconds by default. Pulling the image does not count.
+    ///
+    /// A container that runs, but in which EventSourcingDB does not answer within this time, is replaced by a new
+    /// one, up to 3 containers in total, see [`ContainerBuilder::start`].
+    ///
+    /// # Panics
+    /// Panics if the startup timeout is zero.
+    #[must_use]
+    pub fn with_startup_timeout(mut self, startup_timeout: Duration) -> Self {
+        assert!(
+            !startup_timeout.is_zero(),
+            "The startup timeout must be greater than zero"
+        );
+        self.startup_timeout = startup_timeout;
+        self
+    }
+
     /// Start the test container.
     ///
     /// This call will transform the builder into a running container.
-    /// It takes care of starting the container and waiting for it to be ready by waiting for the
-    /// [ping](https://docs.eventsourcingdb.io/reference/api-overview/#authentication)
-    /// endpoint to respond since that doesn't require authentication. It waits up to 60 seconds.
+    /// It pulls the image unless Docker has it already, starts the container, and waits until EventSourcingDB in it
+    /// answers the [ping](https://docs.eventsourcingdb.io/reference/api-overview/#authentication) endpoint with
+    /// status 200, since that doesn't require authentication. The container may take the startup timeout for that,
+    /// from creating it until EventSourcingDB answers, see [`ContainerBuilder::with_startup_timeout`]. A container
+    /// that runs, but in which EventSourcingDB does not answer in time, is replaced by a new one, up to 3 containers
+    /// in total.
+    ///
+    /// Every container whose start fails is removed, unless testcontainers is told to keep containers with
+    /// `TESTCONTAINERS_COMMAND=keep`. A container that Docker finishes only after the start gave up on it, or after
+    /// the start was cancelled, is removed on a thread of its own once Docker is done, even if the runtime of the start
+    /// ended by then, but not if the process exits. A failed removal that no error can name, since a later container
+    /// started, or since it happens on that thread, is logged as a warning through the [`log`](https://docs.rs/log)
+    /// crate, which shows it only if a logger is installed.
     ///
     /// # Errors
-    /// This function will return an error if the container could not be started, if EventSourcingDB does not answer
-    /// within 60 seconds, and at once if the container exits before, naming its exit code and its last output.
+    /// This function returns [`ContainerError::Unreachable`] if EventSourcingDB does not answer in any of the 3
+    /// containers, and fails at once with [`ContainerError::Exited`] if the container exits before, and with
+    /// [`ContainerError::DockerFailed`] if Docker fails. If removing a container fails, a new container still
+    /// replaces it, and the error that the start fails with is wrapped in [`ContainerError::RemovalFailed`], which
+    /// names the failed removal on a line of its own.
     pub async fn start(self) -> Result<Container, ContainerError> {
-        // Every start gets an ID of its own, which labels its container.
-        let start_id = format!("{:032x}", rand::random::<u128>());
-        self.start_with_id(&start_id).await
+        self.start_with(Arc::new(Testcontainers)).await
     }
 
-    /// Starts the test container as [`ContainerBuilder::start`] does, and labels it with the given ID of the start.
-    async fn start_with_id(self, start_id: &str) -> Result<Container, ContainerError> {
+    /// Starts the test container as [`ContainerBuilder::start`] does, through the given Docker.
+    async fn start_with<D: Docker>(self, docker: Arc<D>) -> Result<Container, ContainerError> {
+        let signing_key_pem = self
+            .signing_key
+            .as_ref()
+            .map(|signing_key| signing_key.to_pkcs8_pem(LineEnding::default()))
+            .transpose()?;
+
+        // Pulling the image does not count toward the startup timeout, so the image is there before the first
+        // container is created.
+        docker
+            .provide_image(GenericImage::new(&self.image_name, &self.image_tag))
+            .await
+            .map_err(ContainerError::DockerFailed)?;
+
+        // A container that can not be removed does not keep a new one from replacing it. The failed removal is named
+        // after the error that the start fails with, or logged if a later container starts.
+        let mut removal_errors = Vec::new();
+        for _ in 0..START_ATTEMPTS {
+            let failed = match self
+                .start_attempt(&docker, signing_key_pem.as_deref().map(String::as_str))
+                .await
+            {
+                Ok(instance) => {
+                    for removal_error in removal_errors {
+                        log::warn!(
+                            "failed to remove the container of an attempt that failed: {removal_error}"
+                        );
+                    }
+                    return Ok(Container {
+                        internal_port: self.internal_port,
+                        api_token: self.api_token.clone(),
+                        verifying_key: self.signing_key.as_ref().map(SigningKey::verifying_key),
+                        signing_key: self.signing_key,
+                        instance,
+                    });
+                }
+                Err(failed) => *failed,
+            };
+            removal_errors.extend(failed.removal_error);
+            if let AttemptFailure::Failed(error) = failed.failure {
+                return Err(with_removal_errors(error, removal_errors));
+            }
+        }
+        Err(with_removal_errors(
+            ContainerError::Unreachable {
+                startup_timeout: self.startup_timeout,
+            },
+            removal_errors,
+        ))
+    }
+
+    /// Starts a container, and waits until EventSourcingDB in it answers a ping, for the startup timeout at most.
+    ///
+    /// Whenever that fails, it removes the container, and tells whether a new container replaces it, which is only
+    /// the case if EventSourcingDB did not become reachable in time, and whether removing the container failed.
+    async fn start_attempt<D: Docker>(
+        &self,
+        docker: &Arc<D>,
+        signing_key_pem: Option<&str>,
+    ) -> Result<ContainerAsync<GenericImage>, Box<FailedAttempt>> {
+        // Every attempt gets an ID of its own, which labels its container.
+        let attempt_id = format!("{:032x}", rand::random::<u128>());
+        let request = self.request(&attempt_id, signing_key_pem);
+
+        // The time of the attempt starts once Docker is about to create the container.
+        let deadline = Instant::now() + self.startup_timeout;
+        let mut started = start_in_background(
+            Arc::clone(docker),
+            request,
+            attempt_id.clone(),
+            self.startup_timeout + CREATE_GRACE_PERIOD + BACKGROUND_GRACE_PERIOD,
+        );
+
+        let instance = match timeout_at(deadline, &mut started).await {
+            Ok(Ok(Ok(instance))) => instance,
+            Ok(Ok(Err(error))) => {
+                return Err(fail(
+                    docker.as_ref(),
+                    None,
+                    &attempt_id,
+                    AttemptFailure::Failed(ContainerError::DockerFailed(error)),
+                )
+                .await);
+            }
+            Ok(Err(_)) => panic!("Starting the container panicked"),
+            Err(_) => {
+                // The time ran out while Docker still creates or starts the container. Docker might create it only
+                // after the attempt looked for it to remove it, so the attempt waits for Docker to finish, for the
+                // grace period at most, and leaves the container to the background task after that.
+                let instance = if let Ok(started) = timeout(CREATE_GRACE_PERIOD, &mut started).await
+                {
+                    started.expect("Starting the container panicked").ok()
+                } else {
+                    // The background task removes the container once Docker is done, unless it is done already.
+                    started.close();
+                    started.try_recv().ok().and_then(Result::ok)
+                };
+                return Err(fail(
+                    docker.as_ref(),
+                    instance,
+                    &attempt_id,
+                    AttemptFailure::Unreachable,
+                )
+                .await);
+            }
+        };
+
+        let started = Started {
+            instance: &instance,
+            internal_port: self.internal_port,
+        };
+        match wait_until_reachable(&started, deadline).await {
+            Ok(()) => Ok(instance),
+            Err(Waiting::Unreachable) => Err(fail(
+                docker.as_ref(),
+                Some(instance),
+                &attempt_id,
+                AttemptFailure::Unreachable,
+            )
+            .await),
+            Err(Waiting::Exited) => {
+                let error = match log_tail(instance.id()).await {
+                    Ok(log_tail) => ContainerError::Exited { log_tail },
+                    Err(error) => ContainerError::DockerFailed(error),
+                };
+                Err(fail(
+                    docker.as_ref(),
+                    Some(instance),
+                    &attempt_id,
+                    AttemptFailure::Failed(error),
+                )
+                .await)
+            }
+            Err(Waiting::Failed(error)) => Err(fail(
+                docker.as_ref(),
+                Some(instance),
+                &attempt_id,
+                AttemptFailure::Failed(ContainerError::DockerFailed(error)),
+            )
+            .await),
+        }
+    }
+
+    /// Returns the request for the container of the given attempt, which carries the label of the attempt.
+    fn request(
+        &self,
+        attempt_id: &str,
+        signing_key_pem: Option<&str>,
+    ) -> ContainerRequest<GenericImage> {
         let http_port = self.internal_port.as_u16().to_string();
         let mut cmd_args = vec![
             "run",
@@ -168,61 +379,183 @@ impl ContainerBuilder {
             "--http-port",
             &http_port,
         ];
-        // The container is ready once EventSourcingDB answers, which wait_until_ready waits for, instead of the
+        // The container is ready once EventSourcingDB answers, which wait_until_reachable waits for, instead of the
         // HTTP wait of testcontainers, which looks up the mapped port only once.
-        let mut test_container = GenericImage::new(self.image_name, self.image_tag)
+        let mut request = GenericImage::new(&self.image_name, &self.image_tag)
             .with_exposed_port(self.internal_port)
-            .with_label(START_LABEL, start_id)
-            .with_startup_timeout(self.startup_timeout);
-        if let Some(signing_key) = &self.signing_key {
+            .with_label(START_LABEL, attempt_id);
+        if let Some(signing_key_pem) = signing_key_pem {
             // if signing is enabled, we need to add the signing key to the command args
             cmd_args.push("--signing-key-file=/tmp/signing_key.pem");
-            test_container = test_container.with_copy_to(
+            request = request.with_copy_to(
                 "/tmp/signing_key.pem",
-                CopyDataSource::Data(Vec::from(
-                    signing_key.to_pkcs8_pem(LineEnding::default())?.as_bytes(),
-                )),
+                CopyDataSource::Data(Vec::from(signing_key_pem.as_bytes())),
             );
         }
-        let instance = match test_container.with_cmd(cmd_args).start().await {
-            Ok(instance) => instance,
-            Err(error) => {
-                return Err(remove_containers_of_failed_start(start_id, error)
-                    .await
-                    .into());
-            }
-        };
-        wait_until_ready(&instance, self.internal_port, self.startup_timeout).await?;
-        Ok(Container {
-            internal_port: self.internal_port,
-            api_token: self.api_token.clone(),
-            verifying_key: self.signing_key.as_ref().map(SigningKey::verifying_key),
-            signing_key: self.signing_key,
-            instance,
-        })
+        request.with_cmd(cmd_args)
     }
 }
 
-/// Removes the containers of a start that failed, and returns the error it failed with.
+/// An attempt to start a container that failed, whose container was removed
+struct FailedAttempt {
+    /// How the attempt failed
+    failure: AttemptFailure,
+    /// The error that removing the container failed with, if it did
+    removal_error: Option<TestcontainersError>,
+}
+
+/// How an attempt to start a container failed
+enum AttemptFailure {
+    /// EventSourcingDB did not become reachable in time, so a new container replaces this one
+    Unreachable,
+    /// Starting the container fails with the error, and no new container replaces it
+    Failed(ContainerError),
+}
+
+/// The calls to Docker that starting a container makes, which the tests replace in parts, to cause what Docker does
+/// only rarely
+trait Docker: Send + Sync + 'static {
+    /// Pulls the image, unless Docker has it already.
+    fn provide_image(
+        &self,
+        image: GenericImage,
+    ) -> impl Future<Output = Result<(), TestcontainersError>> + Send {
+        provide_image(image)
+    }
+
+    /// Creates and starts a container for the request.
+    fn start(
+        &self,
+        request: ContainerRequest<GenericImage>,
+    ) -> impl Future<Output = Result<ContainerAsync<GenericImage>, TestcontainersError>> + Send + 'static
+    {
+        request.start()
+    }
+
+    /// Removes every container that carries the label of the given attempt, whether it runs or not.
+    fn remove_containers_of_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> impl Future<Output = Result<(), TestcontainersError>> + Send {
+        remove_containers_of_attempt(attempt_id)
+    }
+}
+
+/// Docker as testcontainers talks to it
+struct Testcontainers;
+
+impl Docker for Testcontainers {}
+
+/// Pulls the image, unless Docker has it already.
+async fn provide_image(image: GenericImage) -> Result<(), TestcontainersError> {
+    let descriptor = format!("{}:{}", image.name(), image.tag());
+    let docker = docker_client_instance().await?;
+    match docker.inspect_image(&descriptor).await {
+        Ok(_) => Ok(()),
+        Err(BollardError::DockerResponseServerError {
+            status_code: 404, ..
+        }) => {
+            let _request = image.pull_image().await?;
+            Ok(())
+        }
+        Err(err) => Err(ClientError::PullImage { descriptor, err }.into()),
+    }
+}
+
+/// Creates and starts a container for the request in a task of its own, so that neither the end of the time of the
+/// attempt nor a start that is cancelled cuts the calls to Docker short, since Docker might then create the container
+/// only after it was looked for to remove it. If nobody waits for the container any longer once Docker is done, the
+/// task removes it.
 ///
-/// Testcontainers creates the container before it starts it, but owns it only once it started, so a start that fails
-/// in between, for example since it runs into the startup timeout, leaves the container behind. So the containers of
-/// the start are found by its label and removed, unless testcontainers is told to keep containers. If removing them
-/// fails as well, the error names both failures.
-async fn remove_containers_of_failed_start(
-    start_id: &str,
-    error: TestcontainersError,
-) -> TestcontainersError {
+/// The task runs on the runtime for starting containers, so that it goes on once the runtime of the start ends, as the
+/// runtime of a test does at the end of the test. It waits for Docker for the given time at most, which is longer than
+/// the attempt may wait for it.
+fn start_in_background<D: Docker>(
+    docker: Arc<D>,
+    request: ContainerRequest<GenericImage>,
+    attempt_id: String,
+    time_limit: Duration,
+) -> oneshot::Receiver<Result<ContainerAsync<GenericImage>, TestcontainersError>> {
+    let (sender, receiver) = oneshot::channel();
+    drop(start_runtime().spawn(async move {
+        let started = timeout(time_limit, docker.start(request))
+            .await
+            .unwrap_or_else(|_| Err(WaitContainerError::StartupTimeout.into()));
+        if let Err(started) = sender.send(started) {
+            // As nobody waits for this, it logs what fails.
+            if let Err(error) = remove_attempt(&*docker, started.ok(), &attempt_id).await {
+                log::warn!("failed to remove the container of a start that was given up: {error}");
+            }
+        }
+    }));
+    receiver
+}
+
+/// Returns the runtime for starting containers, which runs on a thread of its own as long as the process does.
+fn start_runtime() -> &'static Handle {
+    static START_RUNTIME: OnceLock<Handle> = OnceLock::new();
+    START_RUNTIME.get_or_init(|| {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build the runtime for starting containers");
+        let handle = runtime.handle().clone();
+        let _thread = thread::Builder::new()
+            .name("eventsourcingdb-container-start".to_string())
+            .spawn(move || runtime.block_on(pending::<()>()))
+            .expect("Failed to spawn the thread for starting containers");
+        handle
+    })
+}
+
+/// Removes the containers of an attempt that failed as the given failure says.
+async fn fail<D: Docker>(
+    docker: &D,
+    instance: Option<ContainerAsync<GenericImage>>,
+    attempt_id: &str,
+    failure: AttemptFailure,
+) -> Box<FailedAttempt> {
+    Box::new(FailedAttempt {
+        failure,
+        removal_error: remove_attempt(docker, instance, attempt_id).await.err(),
+    })
+}
+
+/// Names each failure to remove a container after the error that starting the container failed with, on a line of
+/// its own.
+fn with_removal_errors(
+    error: ContainerError,
+    removal_errors: Vec<TestcontainersError>,
+) -> ContainerError {
+    removal_errors
+        .into_iter()
+        .fold(error, |error, removal_error| {
+            ContainerError::RemovalFailed {
+                error: Box::new(error),
+                removal_error,
+            }
+        })
+}
+
+/// Removes the containers of an attempt that failed, unless testcontainers is told to keep containers.
+///
+/// The container that testcontainers handed out is removed through testcontainers, so that it releases what it holds
+/// for it. Beyond that, the containers of the attempt are found by its label, since testcontainers creates a
+/// container before it starts it, but hands it out only once it started.
+async fn remove_attempt<D: Docker>(
+    docker: &D,
+    instance: Option<ContainerAsync<GenericImage>>,
+    attempt_id: &str,
+) -> Result<(), TestcontainersError> {
     // A container is kept to debug it if testcontainers is told so, which it then does for its own containers too.
     if keeps_containers(std::env::var("TESTCONTAINERS_COMMAND").ok().as_deref()) {
-        return error;
+        drop(instance);
+        return Ok(());
     }
-    match remove_containers_of_start(start_id).await {
-        Ok(()) => error,
-        Err(removal_error) => TestcontainersError::other(format!(
-            "{error}, and removing the container of the failed start failed: {removal_error}"
-        )),
+    if let Some(instance) = instance {
+        instance.rm().await?;
     }
+    docker.remove_containers_of_attempt(attempt_id).await
 }
 
 /// Tells whether testcontainers keeps its containers instead of removing them, as the given value of the environment
@@ -231,23 +564,23 @@ fn keeps_containers(command: Option<&str>) -> bool {
     command == Some("keep")
 }
 
-/// Removes every container that carries the label of the given start, whether it runs or not.
-async fn remove_containers_of_start(start_id: &str) -> Result<(), TestcontainersError> {
+/// Removes every container that carries the label of the given attempt, whether it runs or not.
+async fn remove_containers_of_attempt(attempt_id: &str) -> Result<(), TestcontainersError> {
     let docker = docker_client_instance().await?;
     let containers = docker
         .list_containers(Some(ListContainersOptions {
             all: true,
             filters: Some(HashMap::from([(
                 "label".to_string(),
-                vec![format!("{START_LABEL}={start_id}")],
+                vec![format!("{START_LABEL}={attempt_id}")],
             )])),
             ..Default::default()
         }))
         .await
-        .map_err(TestcontainersError::other)?;
+        .map_err(ClientError::ListContainers)?;
 
     for id in containers.into_iter().filter_map(|container| container.id) {
-        docker
+        let removed = docker
             .remove_container(
                 &id,
                 Some(RemoveContainerOptions {
@@ -256,79 +589,134 @@ async fn remove_containers_of_start(start_id: &str) -> Result<(), Testcontainers
                     ..Default::default()
                 }),
             )
-            .await
-            .map_err(TestcontainersError::other)?;
+            .await;
+        match removed {
+            Ok(()) => {}
+            Err(error) if is_removed_already(&error) => {}
+            Err(error) => return Err(ClientError::RemoveContainer(error).into()),
+        }
     }
     Ok(())
 }
 
-/// Waits until EventSourcingDB in the container answers a ping, for at most the startup timeout.
-///
-/// Docker may report the port that it maps the port of the container to only a while after it started the container,
-/// especially when it is busy, so looking up the port is repeated as well as the ping.
-async fn wait_until_ready(
-    instance: &ContainerAsync<GenericImage>,
-    internal_port: ContainerPort,
-    startup_timeout: Duration,
-) -> Result<(), ContainerError> {
-    let deadline = Instant::now() + startup_timeout;
-    let client = reqwest::Client::builder()
-        .timeout(POLL_INTERVAL * 10)
-        .build()
-        .map_err(|error| TestcontainersError::other(error.to_string()))?;
-
-    loop {
-        if let Ok(host_port) = instance.get_host_port_ipv4(internal_port).await {
-            let host = instance.get_host().await?;
-            let is_ready = client
-                .get(format!("http://{host}:{host_port}/api/v1/ping"))
-                .send()
-                .await
-                .is_ok_and(|response| response.status().is_success());
-            if is_ready {
-                return Ok(());
-            }
-        }
-        // A container that exited never becomes ready, so waiting longer is pointless. A busy Docker may fail to tell,
-        // which is retried as a failed lookup of the port is.
-        if let Ok(Some(exit_code)) = instance.exit_code().await {
-            return Err(exited_error(instance, exit_code).await.into());
-        }
-        if Instant::now() >= deadline {
-            return Err(TestcontainersError::from(WaitContainerError::StartupTimeout).into());
-        }
-        sleep(POLL_INTERVAL).await;
+/// Tells whether removing a container failed only since the container is gone already, or since Docker removes it
+/// already, which a removal that runs in the background at the same time may cause.
+fn is_removed_already(error: &BollardError) -> bool {
+    match error {
+        BollardError::DockerResponseServerError {
+            status_code: 404, ..
+        } => true,
+        BollardError::DockerResponseServerError {
+            status_code: 409,
+            message,
+        } => message.contains("already in progress"),
+        _ => false,
     }
 }
 
-/// Describes a container that exited before EventSourcingDB answered, with its exit code and the last lines of its
-/// output, which tell why it exited.
-async fn exited_error(
-    instance: &ContainerAsync<GenericImage>,
-    exit_code: i64,
-) -> TestcontainersError {
-    /// How many of the last lines of stdout and stderr the error names
-    const LAST_LINES: usize = 10;
+/// What waiting for EventSourcingDB asks Docker about a container, which the tests replace
+trait Inspect {
+    /// Returns the address on the host at which EventSourcingDB in the container is reachable, or `None` as long as
+    /// Docker has not published its port.
+    async fn address(&self) -> Result<Option<String>, TestcontainersError>;
 
-    let last_lines = |output: Vec<u8>| {
-        let output = String::from_utf8_lossy(&output).into_owned();
-        let lines: Vec<&str> = output.lines().collect();
-        lines[lines.len().saturating_sub(LAST_LINES)..].join("\n")
+    /// Returns the exit code of the container, or `None` as long as it runs.
+    async fn exit_code(&self) -> Result<Option<i64>, TestcontainersError>;
+}
+
+/// A container that testcontainers started
+struct Started<'a> {
+    instance: &'a ContainerAsync<GenericImage>,
+    internal_port: ContainerPort,
+}
+
+impl Inspect for Started<'_> {
+    async fn address(&self) -> Result<Option<String>, TestcontainersError> {
+        match self.instance.get_host_port_ipv4(self.internal_port).await {
+            Ok(host_port) => Ok(Some(format!(
+                "{}:{host_port}",
+                self.instance.get_host().await?
+            ))),
+            Err(TestcontainersError::PortNotExposed { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn exit_code(&self) -> Result<Option<i64>, TestcontainersError> {
+        self.instance.exit_code().await
+    }
+}
+
+/// Why waiting for EventSourcingDB ended before it became reachable
+#[derive(Debug)]
+enum Waiting {
+    /// EventSourcingDB did not become reachable in time
+    Unreachable,
+    /// The container exited
+    Exited,
+    /// Docker failed
+    Failed(TestcontainersError),
+}
+
+impl From<TestcontainersError> for Waiting {
+    fn from(error: TestcontainersError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+/// Waits until EventSourcingDB in the container answers a ping with status 200, until the deadline at most.
+///
+/// It ends at once if the container exits, or if Docker fails. Docker may publish the port of the container only a
+/// while after it started the container, especially when it is busy, so looking up the port is repeated for each
+/// ping.
+async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Result<(), Waiting> {
+    let client = reqwest::Client::builder()
+        .timeout(PING_TIMEOUT)
+        .build()
+        .map_err(TestcontainersError::other)?;
+
+    let waiting = async {
+        loop {
+            if container.exit_code().await?.is_some() {
+                return Err(Waiting::Exited);
+            }
+            if let Some(address) = container.address().await? {
+                let is_reachable = client
+                    .get(format!("http://{address}/api/v1/ping"))
+                    .send()
+                    .await
+                    .is_ok_and(|response| response.status() == StatusCode::OK);
+                if is_reachable {
+                    return Ok(());
+                }
+            }
+            sleep(POLL_INTERVAL).await;
+        }
     };
-    let stdout = instance
-        .stdout_to_vec()
+    timeout_at(deadline, waiting)
         .await
-        .map(last_lines)
-        .unwrap_or_default();
-    let stderr = instance
-        .stderr_to_vec()
-        .await
-        .map(last_lines)
-        .unwrap_or_default();
+        .unwrap_or(Err(Waiting::Unreachable))
+}
 
-    TestcontainersError::other(format!(
-        "The container exited with code {exit_code} before EventSourcingDB answered. The last lines of its stdout:\n{stdout}\nThe last lines of its stderr:\n{stderr}"
-    ))
+/// Returns the last lines of the log of a container, with stdout and stderr in the order in which the container
+/// wrote them.
+///
+/// The blank lines at the end of the log do not count, so the whole log is read instead of the tail that Docker would
+/// return.
+async fn log_tail(id: &str) -> Result<String, TestcontainersError> {
+    let docker = docker_client_instance().await?;
+    let mut output = pin!(docker.logs(
+        id,
+        Some(LogsOptionsBuilder::new().stdout(true).stderr(true).build()),
+    ));
+    let mut log = Vec::new();
+    while let Some(frame) = output.next().await {
+        log.extend_from_slice(frame.map_err(TestcontainersError::other)?.as_ref());
+    }
+
+    let log = String::from_utf8_lossy(&log);
+    let lines: Vec<&str> = log.trim_end().lines().collect();
+    Ok(lines[lines.len().saturating_sub(LOG_TAIL_LINES)..].join("\n"))
 }
 
 /// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).
