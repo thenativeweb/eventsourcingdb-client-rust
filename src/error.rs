@@ -319,7 +319,8 @@ pub enum ContainerError {
     /// Docker is not running
     #[error("failed to start the container: {0}")]
     DockerFailed(#[source] testcontainers::TestcontainersError),
-    /// Starting the container failed, and removing the container afterwards failed as well, so it may be left behind
+    /// Starting the container failed, and removing a container failed as well, so it may be left behind. If several
+    /// removals failed, each one wraps the error before it, so that the message names each on a line of its own.
     #[error("{error}\nfailed to remove the container: {removal_error}")]
     RemovalFailed {
         /// The error that starting the container failed with

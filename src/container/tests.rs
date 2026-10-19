@@ -949,8 +949,7 @@ async fn names_a_failed_removal_on_a_line_of_its_own_after_the_error_of_the_star
 }
 
 #[tokio::test]
-async fn fails_at_once_if_docker_fails_to_remove_a_container_in_which_the_database_did_not_become_reachable()
- {
+async fn replaces_a_container_that_docker_fails_to_remove_and_names_each_failed_removal() {
     let docker =
         Arc::new(TestDocker::changing(|_, request| without_network(request)).failing_to_remove());
 
@@ -960,15 +959,61 @@ async fn fails_at_once_if_docker_fails_to_remove_a_container_in_which_the_databa
         .await;
     let removed_by_test = docker.remove_left_behind().await;
 
-    let error = result.expect_err("Expected removing the container to fail");
-    assert!(
-        matches!(error, ContainerError::DockerFailed(_)),
-        "Expected Docker to fail, but got: {error}"
-    );
+    let error = result.expect_err("Expected the database not to become reachable");
+    let removal_failure =
+        "\nfailed to remove the container: other error: Docker failed to remove the container";
     assert_eq!(
         error.to_string(),
-        "failed to start the container: other error: Docker failed to remove the container"
+        format!(
+            "failed to start the container, the database did not become reachable within 1s in any of 3 containers{}",
+            removal_failure.repeat(3)
+        )
     );
-    assert_eq!(docker.attempt_ids().len(), 1);
+    // Each failed removal wraps the error before it, and the innermost one is the error of the start.
+    let mut innermost = &error;
+    let mut removal_failures = 0;
+    while let ContainerError::RemovalFailed { error, .. } = innermost {
+        innermost = error;
+        removal_failures += 1;
+    }
+    assert_eq!(removal_failures, 3);
+    assert!(
+        matches!(innermost, ContainerError::Unreachable { .. }),
+        "Expected the database not to become reachable, but got: {innermost}"
+    );
+    assert_eq!(docker.attempt_ids().len(), 3);
     assert_eq!(removed_by_test, 0);
+}
+
+#[tokio::test]
+async fn starts_a_container_that_replaces_one_that_docker_fails_to_remove() {
+    let docker = Arc::new(
+        TestDocker::changing(|attempt, request| {
+            if attempt == 1 {
+                without_network(request)
+            } else {
+                request
+            }
+        })
+        .failing_to_remove(),
+    );
+
+    let result = builder()
+        .with_startup_timeout(Duration::from_secs(5))
+        .start_with(Arc::clone(&docker))
+        .await;
+    let attempt_ids = docker.attempt_ids();
+    let left_behind = containers_of(&attempt_ids[0]).await;
+
+    let container = result.expect("Expected the second container to start");
+    container
+        .stop()
+        .await
+        .expect("Failed to stop the container");
+    assert_eq!(docker.remove_left_behind().await, 0);
+    assert_eq!(attempt_ids.len(), 2);
+    assert!(
+        left_behind.is_empty(),
+        "Expected the replaced container to be removed"
+    );
 }

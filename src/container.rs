@@ -195,8 +195,9 @@ impl ContainerBuilder {
     /// # Errors
     /// This function returns [`ContainerError::Unreachable`] if EventSourcingDB does not answer in any of the 3
     /// containers, and fails at once with [`ContainerError::Exited`] if the container exits before, and with
-    /// [`ContainerError::DockerFailed`] if Docker fails. If removing the container of a start that failed fails as
-    /// well, it returns [`ContainerError::RemovalFailed`].
+    /// [`ContainerError::DockerFailed`] if Docker fails. If removing a container fails, a new container still
+    /// replaces it, and the error that the start fails with is wrapped in [`ContainerError::RemovalFailed`], which
+    /// names the failed removal on a line of its own.
     pub async fn start(self) -> Result<Container, ContainerError> {
         self.start_with(Arc::new(Testcontainers)).await
     }
@@ -216,12 +217,20 @@ impl ContainerBuilder {
             .await
             .map_err(ContainerError::DockerFailed)?;
 
+        // A container that can not be removed does not keep a new one from replacing it. The failed removal is named
+        // after the error that the start fails with, or logged if a later container starts.
+        let mut removal_errors = Vec::new();
         for _ in 0..START_ATTEMPTS {
-            match self
+            let failed = match self
                 .start_attempt(&docker, signing_key_pem.as_deref().map(String::as_str))
                 .await
             {
                 Ok(instance) => {
+                    for removal_error in removal_errors {
+                        log::warn!(
+                            "failed to remove the container of an attempt that failed: {removal_error}"
+                        );
+                    }
                     return Ok(Container {
                         internal_port: self.internal_port,
                         api_token: self.api_token.clone(),
@@ -230,24 +239,30 @@ impl ContainerBuilder {
                         instance,
                     });
                 }
-                Err(AttemptFailure::Unreachable) => {}
-                Err(AttemptFailure::Failed(error)) => return Err(error),
+                Err(failed) => *failed,
+            };
+            removal_errors.extend(failed.removal_error);
+            if let AttemptFailure::Failed(error) = failed.failure {
+                return Err(with_removal_errors(error, removal_errors));
             }
         }
-        Err(ContainerError::Unreachable {
-            startup_timeout: self.startup_timeout,
-        })
+        Err(with_removal_errors(
+            ContainerError::Unreachable {
+                startup_timeout: self.startup_timeout,
+            },
+            removal_errors,
+        ))
     }
 
     /// Starts a container, and waits until EventSourcingDB in it answers a ping, for the startup timeout at most.
     ///
     /// Whenever that fails, it removes the container, and tells whether a new container replaces it, which is only
-    /// the case if EventSourcingDB did not become reachable in time.
+    /// the case if EventSourcingDB did not become reachable in time, and whether removing the container failed.
     async fn start_attempt<D: Docker>(
         &self,
         docker: &Arc<D>,
         signing_key_pem: Option<&str>,
-    ) -> Result<ContainerAsync<GenericImage>, AttemptFailure> {
+    ) -> Result<ContainerAsync<GenericImage>, Box<FailedAttempt>> {
         // Every attempt gets an ID of its own, which labels its container.
         let attempt_id = format!("{:032x}", rand::random::<u128>());
         let request = self.request(&attempt_id, signing_key_pem);
@@ -263,7 +278,7 @@ impl ContainerBuilder {
                     docker.as_ref(),
                     None,
                     &attempt_id,
-                    ContainerError::DockerFailed(error),
+                    AttemptFailure::Failed(ContainerError::DockerFailed(error)),
                 )
                 .await);
             }
@@ -280,7 +295,13 @@ impl ContainerBuilder {
                     started.close();
                     started.try_recv().ok().and_then(Result::ok)
                 };
-                return Err(replace(docker.as_ref(), instance, &attempt_id).await);
+                return Err(fail(
+                    docker.as_ref(),
+                    instance,
+                    &attempt_id,
+                    AttemptFailure::Unreachable,
+                )
+                .await);
             }
         };
 
@@ -290,21 +311,31 @@ impl ContainerBuilder {
         };
         match wait_until_reachable(&started, deadline).await {
             Ok(()) => Ok(instance),
-            Err(Waiting::Unreachable) => {
-                Err(replace(docker.as_ref(), Some(instance), &attempt_id).await)
-            }
+            Err(Waiting::Unreachable) => Err(fail(
+                docker.as_ref(),
+                Some(instance),
+                &attempt_id,
+                AttemptFailure::Unreachable,
+            )
+            .await),
             Err(Waiting::Exited) => {
                 let error = match log_tail(instance.id()).await {
                     Ok(log_tail) => ContainerError::Exited { log_tail },
                     Err(error) => ContainerError::DockerFailed(error),
                 };
-                Err(fail(docker.as_ref(), Some(instance), &attempt_id, error).await)
+                Err(fail(
+                    docker.as_ref(),
+                    Some(instance),
+                    &attempt_id,
+                    AttemptFailure::Failed(error),
+                )
+                .await)
             }
             Err(Waiting::Failed(error)) => Err(fail(
                 docker.as_ref(),
                 Some(instance),
                 &attempt_id,
-                ContainerError::DockerFailed(error),
+                AttemptFailure::Failed(ContainerError::DockerFailed(error)),
             )
             .await),
         }
@@ -344,9 +375,17 @@ impl ContainerBuilder {
     }
 }
 
+/// An attempt to start a container that failed, whose container was removed
+struct FailedAttempt {
+    /// How the attempt failed
+    failure: AttemptFailure,
+    /// The error that removing the container failed with, if it did
+    removal_error: Option<TestcontainersError>,
+}
+
 /// How an attempt to start a container failed
 enum AttemptFailure {
-    /// EventSourcingDB did not become reachable in time, and the container was removed, so that a new one replaces it
+    /// EventSourcingDB did not become reachable in time, so a new container replaces this one
     Unreachable,
     /// Starting the container fails with the error, and no new container replaces it
     Failed(ContainerError),
@@ -424,33 +463,33 @@ fn start_in_background<D: Docker>(
     receiver
 }
 
-/// Removes the containers of an attempt in which EventSourcingDB did not become reachable in time, so that a new
-/// container replaces it. If removing them fails, Docker failed, so starting the container fails at once.
-async fn replace<D: Docker>(
-    docker: &D,
-    instance: Option<ContainerAsync<GenericImage>>,
-    attempt_id: &str,
-) -> AttemptFailure {
-    match remove_attempt(docker, instance, attempt_id).await {
-        Ok(()) => AttemptFailure::Unreachable,
-        Err(error) => AttemptFailure::Failed(ContainerError::DockerFailed(error)),
-    }
-}
-
-/// Removes the containers of an attempt that failed with the given error, which a failure to remove them follows.
+/// Removes the containers of an attempt that failed as the given failure says.
 async fn fail<D: Docker>(
     docker: &D,
     instance: Option<ContainerAsync<GenericImage>>,
     attempt_id: &str,
-    error: ContainerError,
-) -> AttemptFailure {
-    AttemptFailure::Failed(match remove_attempt(docker, instance, attempt_id).await {
-        Ok(()) => error,
-        Err(removal_error) => ContainerError::RemovalFailed {
-            error: Box::new(error),
-            removal_error,
-        },
+    failure: AttemptFailure,
+) -> Box<FailedAttempt> {
+    Box::new(FailedAttempt {
+        failure,
+        removal_error: remove_attempt(docker, instance, attempt_id).await.err(),
     })
+}
+
+/// Names each failure to remove a container after the error that starting the container failed with, on a line of
+/// its own.
+fn with_removal_errors(
+    error: ContainerError,
+    removal_errors: Vec<TestcontainersError>,
+) -> ContainerError {
+    removal_errors
+        .into_iter()
+        .fold(error, |error, removal_error| {
+            ContainerError::RemovalFailed {
+                error: Box::new(error),
+                removal_error,
+            }
+        })
 }
 
 /// Removes the containers of an attempt that failed, unless testcontainers is told to keep containers.
