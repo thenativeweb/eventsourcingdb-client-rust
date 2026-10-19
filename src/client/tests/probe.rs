@@ -1,16 +1,19 @@
 //! The tests of finding out which version of the API the server offers.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Instant,
 };
 
-use futures::future::join_all;
+use futures::{future::join_all, poll};
 use tokio::{sync::watch, time::timeout};
 
 use super::{
-    Api, GUARD_TIMEOUT, Reply, Request, TestServer, create_client, db_api_error, is_probe,
-    probe_reply,
+    Api, GUARD_TIMEOUT, Reply, Request, STALL_TIMEOUT, TestServer, create_client, db_api_error,
+    is_probe, probe_reply,
 };
 use crate::error::ClientError;
 
@@ -263,5 +266,122 @@ async fn creating_a_client_sends_no_request() {
         requests.len(),
         2,
         "Expected a probe and a request, but got {requests:?}"
+    );
+}
+
+/// How many requests the tests of concurrent first requests send at once
+const CONCURRENT_REQUESTS: usize = 5;
+
+#[tokio::test]
+async fn concurrent_first_requests_share_a_probe_that_stalls() {
+    let mut server = TestServer::start(|_: &Request| Reply::Nothing).await;
+    let client = create_client(&server);
+
+    let started = Instant::now();
+    let results = timeout(
+        GUARD_TIMEOUT,
+        join_all((0..CONCURRENT_REQUESTS).map(|_| async {
+            let result = client.verify_api_token().await;
+            (result, started.elapsed())
+        })),
+    )
+    .await
+    .expect("The requests did not end");
+
+    for (result, elapsed) in results {
+        assert!(
+            matches!(result, Err(ClientError::ConnectionStalled)),
+            "Expected a stalled connection, but got {result:?}"
+        );
+        // Every request waits for the same probe, instead of one after another.
+        assert!(
+            elapsed < STALL_TIMEOUT * 2,
+            "Expected the request to fail after the stall timeout once, but it took {elapsed:?}"
+        );
+    }
+    let requests = server.received();
+    assert_eq!(
+        requests.len(),
+        1,
+        "Expected a single probe, but got {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_first_requests_get_the_same_error_of_a_failed_probe() {
+    let (open_gate, gate) = watch::channel(false);
+    let mut server = TestServer::start(move |_: &Request| {
+        Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::text(503, "server is shutting down\n")),
+        )
+    })
+    .await;
+    let client = Arc::new(create_client(&server));
+
+    let requests = tokio::spawn({
+        let client = client.clone();
+        async move { join_all((0..CONCURRENT_REQUESTS).map(|_| client.verify_api_token())).await }
+    });
+    // The probe is held back until every request waits for it.
+    let first = server.next_request().await;
+    assert!(is_probe(&first), "Expected the probe, but got {first:?}");
+    open_gate.send(true).expect("Failed to open the gate");
+
+    let results = timeout(GUARD_TIMEOUT, requests)
+        .await
+        .expect("The requests did not end")
+        .expect("The requests panicked");
+    let errors: Vec<_> = results
+        .into_iter()
+        .map(|result| db_api_error(result.expect_err("Expected the probe to fail")))
+        .collect();
+    for error in &errors {
+        assert_eq!(error, &errors[0]);
+        assert_eq!(error.status, 503);
+        assert_eq!(error.description, "server is shutting down");
+    }
+    let requests = server.received();
+    assert!(
+        requests.is_empty(),
+        "Expected a single probe, but got more: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_request_that_started_the_probe_lets_the_others_finish() {
+    let (open_gate, gate) = watch::channel(false);
+    let mut server = TestServer::start(move |request: &Request| {
+        if is_probe(request) {
+            Reply::Gated(gate.clone(), Box::new(probe_reply(Api::V2)))
+        } else {
+            Api::V2.verify_api_token_answer()
+        }
+    })
+    .await;
+    let client = create_client(&server);
+
+    // The leading request sends the probe, which the server holds back.
+    let mut leader = Box::pin(client.verify_api_token());
+    tokio::select! {
+        request = server.next_request() => assert!(is_probe(&request), "Expected the probe, but got {request:?}"),
+        result = &mut leader => panic!("Expected the leading request to wait for the probe, but got {result:?}"),
+    }
+    // The following request waits for the same probe.
+    let mut follower = Box::pin(client.verify_api_token());
+    assert!(poll!(&mut follower).is_pending());
+
+    drop(leader);
+    open_gate.send(true).expect("Failed to open the gate");
+    timeout(GUARD_TIMEOUT, follower)
+        .await
+        .expect("The following request did not end")
+        .expect("Expected the following request to succeed with the probe of the leading one");
+
+    let requests = server.received();
+    assert_eq!(
+        requests.iter().filter(|request| is_probe(request)).count(),
+        0,
+        "Expected a single probe, but got more: {requests:?}"
     );
 }

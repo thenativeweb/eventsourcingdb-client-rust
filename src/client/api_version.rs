@@ -1,6 +1,15 @@
 //! This is a purely internal module that finds out which version of the API the server offers, which is the one
 //! place that chooses between [`super::v1`] and [`super::v2`].
 
+use std::{
+    fmt,
+    sync::{Mutex, MutexGuard, PoisonError},
+};
+
+use futures::{
+    FutureExt,
+    future::{BoxFuture, Shared, WeakShared},
+};
 use reqwest::{Method, StatusCode};
 
 use super::{
@@ -16,6 +25,102 @@ pub enum ApiVersion {
     V1,
     /// The v2 API
     V2,
+}
+
+/// A probe, which every request that waits for it drives as a [`Shared`] future, and whose result each of them gets
+type Probe = BoxFuture<'static, Result<ApiVersion, ClientError>>;
+
+/// What a client knows about the version of the API that the server offers
+enum State {
+    /// The version is not known, and no probe runs.
+    Unknown,
+    /// A probe runs. It is held weakly, so that it ends once every request that waited for it is dropped, and the
+    /// next request starts a new one, instead of waiting for a probe that nobody drives.
+    Probing(WeakShared<Probe>),
+    /// The version is known.
+    Known(ApiVersion),
+}
+
+/// The version of the API that a client sends its requests through, which its first request finds out
+pub struct ApiVersionCell {
+    state: Mutex<State>,
+}
+
+impl ApiVersionCell {
+    pub fn new() -> Self {
+        Self {
+            state: Mutex::new(State::Unknown),
+        }
+    }
+
+    /// A cell that knows the version already, for the tests
+    #[cfg(test)]
+    pub fn known(api_version: ApiVersion) -> Self {
+        Self {
+            state: Mutex::new(State::Known(api_version)),
+        }
+    }
+
+    /// Returns the version of the API that the server offers, and finds it out with a probe if it is not known yet.
+    ///
+    /// Every request that comes while a probe runs waits for it, and gets its result, its error included, whichever
+    /// of them drives the probe. Only an answer that tells the version is remembered, so a request that comes after
+    /// a probe failed starts a new one.
+    ///
+    /// # Errors
+    /// Returns the error that the probe failed with.
+    pub async fn get_or_probe(&self, http: &Http) -> Result<ApiVersion, ClientError> {
+        let probe = {
+            let mut state = self.lock();
+            let running = match &*state {
+                State::Known(api_version) => return Ok(*api_version),
+                State::Probing(probe) => probe.upgrade(),
+                State::Unknown => None,
+            };
+            running.unwrap_or_else(|| {
+                let http = http.clone();
+                let started: Shared<Probe> = async move { probe(&http).await }.boxed().shared();
+                *state = State::Probing(
+                    started
+                        .downgrade()
+                        .expect("A probe that was just started has not ended"),
+                );
+                started
+            })
+        };
+
+        let result = probe.clone().await;
+
+        // The first request that gets the result remembers it if it tells the version, and forgets the probe if it
+        // failed, unless another probe has started since.
+        let mut state = self.lock();
+        let is_current = matches!(&*state, State::Probing(current) if current.upgrade().is_some_and(|current| current.ptr_eq(&probe)));
+        if is_current {
+            *state = match &result {
+                Ok(api_version) => State::Known(*api_version),
+                Err(_) => State::Unknown,
+            };
+        }
+        result
+    }
+
+    fn lock(&self) -> MutexGuard<'_, State> {
+        // The state stays consistent even if a thread panicked while it held the lock.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl fmt::Debug for ApiVersionCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = match &*self.lock() {
+            State::Unknown => "Unknown".to_string(),
+            State::Probing(_) => "Probing".to_string(),
+            State::Known(api_version) => format!("Known({api_version:?})"),
+        };
+        f.debug_struct("ApiVersionCell")
+            .field("state", &state)
+            .finish()
+    }
 }
 
 /// Finds out whether the server offers the v2 API, by pinging it through the v2 API.

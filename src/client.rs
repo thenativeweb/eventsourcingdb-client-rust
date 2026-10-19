@@ -34,12 +34,11 @@ use crate::{
     event::{Event, EventCandidate, ManagementEvent},
     request_options::EventType,
 };
-use api_version::ApiVersion;
+use api_version::{ApiVersion, ApiVersionCell};
 use futures::Stream;
 use http::Http;
 pub use precondition::Precondition;
 use std::time::Duration;
-use tokio::sync::OnceCell;
 use url::Url;
 
 /// How long a request waits for anything to arrive from the server by default before it fails
@@ -66,7 +65,7 @@ const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 pub struct Client {
     http: Http,
-    api_version: OnceCell<ApiVersion>,
+    api_version: ApiVersionCell,
 }
 
 /// Builder for a [`Client`], which you create with [`Client::builder`].
@@ -113,7 +112,7 @@ impl ClientBuilder {
     pub fn build(self) -> Client {
         Client {
             http: Http::new(self.base_url, self.api_token, self.stall_timeout),
-            api_version: OnceCell::new(),
+            api_version: ApiVersionCell::new(),
         }
     }
 }
@@ -171,16 +170,13 @@ impl Client {
 
     /// Returns the version of the API that the server offers, which the first request of the client finds out.
     ///
-    /// Concurrent first requests wait for the same answer. Only an answer that tells the version is remembered, so
-    /// after an error, the next request asks again.
+    /// Concurrent first requests wait for the same answer, or the same error. Only an answer that tells the version
+    /// is remembered, so after an error, the next request asks again.
     ///
     /// # Errors
     /// Returns the error that finding out the version failed with.
     async fn api_version(&self) -> Result<ApiVersion, ClientError> {
-        self.api_version
-            .get_or_try_init(|| api_version::probe(&self.http))
-            .await
-            .copied()
+        self.api_version.get_or_probe(&self.http).await
     }
 
     /// Pings the DB instance to check if it is reachable.

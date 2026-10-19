@@ -11,11 +11,14 @@ use std::{
 
 use bytes::Bytes;
 use serde_json::json;
-use tokio::{net::TcpListener, sync::OnceCell, time::timeout};
+use tokio::{net::TcpListener, time::timeout};
 
 use super::{Api, Client, GUARD_TIMEOUT, STALL_TIMEOUT, event_data, test_candidate};
 use crate::{
-    client::{api_version::ApiVersion, http::Http},
+    client::{
+        api_version::{ApiVersion, ApiVersionCell},
+        http::Http,
+    },
     error::ClientError,
 };
 
@@ -170,7 +173,7 @@ impl Http2Server {
                 stall_timeout,
                 reqwest,
             ),
-            api_version: OnceCell::new_with(Some(api_version)),
+            api_version: ApiVersionCell::known(api_version),
         }
     }
 

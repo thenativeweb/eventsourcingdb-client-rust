@@ -101,8 +101,9 @@ pub fn query() -> Method {
     Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method")
 }
 
-/// The connection to the server that a client sends its requests through
-#[derive(Debug)]
+/// The connection to the server that a client sends its requests through, whose clones share the connections of
+/// reqwest
+#[derive(Debug, Clone)]
 pub struct Http {
     pub base_url: Url,
     pub api_token: String,

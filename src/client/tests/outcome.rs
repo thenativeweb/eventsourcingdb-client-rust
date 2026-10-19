@@ -8,7 +8,7 @@ use super::{
     test_candidate,
 };
 use crate::{
-    client::api_version::ApiVersion,
+    client::api_version::{ApiVersion, ApiVersionCell},
     error::{ClientError, code},
 };
 
@@ -95,12 +95,9 @@ async fn a_write_is_certainly_not_stored_if_the_connection_could_not_be_establis
 
     for (api, api_version) in [(Api::V1, ApiVersion::V1), (Api::V2, ApiVersion::V2)] {
         for write in BOTH_WRITES {
-            let client = Client::new(format!("http://{address}/").parse().unwrap(), "secret");
+            let mut client = Client::new(format!("http://{address}/").parse().unwrap(), "secret");
             // The version is known already, so the write itself is what fails to connect.
-            client
-                .api_version
-                .set(api_version)
-                .expect("Failed to set the version of the API");
+            client.api_version = ApiVersionCell::known(api_version);
 
             let error = write
                 .send(&client)
@@ -132,13 +129,11 @@ async fn a_write_is_certainly_not_stored_if_establishing_the_connection_stalls()
 
     for (api, api_version) in [(Api::V1, ApiVersion::V1), (Api::V2, ApiVersion::V2)] {
         for write in BOTH_WRITES {
-            let client = Client::builder(format!("https://{address}/").parse().unwrap(), "secret")
-                .stall_timeout(STALL_TIMEOUT)
-                .build();
-            client
-                .api_version
-                .set(api_version)
-                .expect("Failed to set the version of the API");
+            let mut client =
+                Client::builder(format!("https://{address}/").parse().unwrap(), "secret")
+                    .stall_timeout(STALL_TIMEOUT)
+                    .build();
+            client.api_version = ApiVersionCell::known(api_version);
 
             let error = timeout(GUARD_TIMEOUT, write.send(&client))
                 .await
