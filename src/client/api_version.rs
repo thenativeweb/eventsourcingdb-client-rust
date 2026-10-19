@@ -27,29 +27,72 @@ pub enum ApiVersion {
     V2,
 }
 
+/// The version of the API that a client sends a request through, as it remembers it
+#[derive(Debug, Clone, Copy)]
+pub enum RememberedApi<'a> {
+    /// The v1 API
+    V1,
+    /// The v2 API, which the request forgets if the server answers it with status `404` or `405`
+    V2(RememberedV2<'a>),
+}
+
+/// The v2 API, as a client remembers it for a request that it sends through it
+#[derive(Debug, Clone, Copy)]
+pub struct RememberedV2<'a> {
+    cell: &'a ApiVersionCell,
+    /// The number of the probe that found out the v2 API
+    probe: u64,
+}
+
+impl RememberedV2<'_> {
+    /// Forgets the v2 API, so that the next request finds out again which version of the API the server offers.
+    ///
+    /// It forgets only what the probe that this request got the v2 API from found out. So it never ends or changes a
+    /// probe that runs, and never forgets a version that a newer probe found out.
+    pub fn forget(self) {
+        let mut memory = self.cell.lock();
+        if matches!(memory.state, State::Known(ApiVersion::V2, probe) if probe == self.probe) {
+            memory.state = State::Unknown;
+        }
+    }
+}
+
 /// A probe, which every request that waits for it drives as a [`Shared`] future, and whose result each of them gets
 type Probe = BoxFuture<'static, Result<ApiVersion, ClientError>>;
 
 /// What a client knows about the version of the API that the server offers
+///
+/// Each probe has a number, which tells it from every other probe of the client, and which the version that it found
+/// out keeps.
 enum State {
     /// The version is not known, and no probe runs.
     Unknown,
     /// A probe runs. It is held weakly, so that it ends once every request that waited for it is dropped, and the
     /// next request starts a new one, instead of waiting for a probe that nobody drives.
-    Probing(WeakShared<Probe>),
-    /// The version is known.
-    Known(ApiVersion),
+    Probing(WeakShared<Probe>, u64),
+    /// The version is known, from the probe with the given number.
+    Known(ApiVersion, u64),
+}
+
+/// What a client remembers about the version of the API, under the lock of its [`ApiVersionCell`]
+struct Memory {
+    state: State,
+    /// How many probes the client started, which numbers them
+    probes: u64,
 }
 
 /// The version of the API that a client sends its requests through, which its first request finds out
 pub struct ApiVersionCell {
-    state: Mutex<State>,
+    memory: Mutex<Memory>,
 }
 
 impl ApiVersionCell {
     pub fn new() -> Self {
         Self {
-            state: Mutex::new(State::Unknown),
+            memory: Mutex::new(Memory {
+                state: State::Unknown,
+                probes: 0,
+            }),
         }
     }
 
@@ -57,7 +100,10 @@ impl ApiVersionCell {
     #[cfg(test)]
     pub fn known(api_version: ApiVersion) -> Self {
         Self {
-            state: Mutex::new(State::Known(api_version)),
+            memory: Mutex::new(Memory {
+                state: State::Known(api_version, 0),
+                probes: 0,
+            }),
         }
     }
 
@@ -69,53 +115,65 @@ impl ApiVersionCell {
     ///
     /// # Errors
     /// Returns the error that the probe failed with.
-    pub async fn get_or_probe(&self, http: &Http) -> Result<ApiVersion, ClientError> {
-        let probe = {
-            let mut state = self.lock();
-            let running = match &*state {
-                State::Known(api_version) => return Ok(*api_version),
-                State::Probing(probe) => probe.upgrade(),
+    pub async fn get_or_probe(&self, http: &Http) -> Result<RememberedApi<'_>, ClientError> {
+        let (probe, number) = {
+            let mut memory = self.lock();
+            let running = match &memory.state {
+                State::Known(api_version, number) => {
+                    return Ok(self.remembered(*api_version, *number));
+                }
+                State::Probing(probe, number) => probe.upgrade().map(|probe| (probe, *number)),
                 State::Unknown => None,
             };
             running.unwrap_or_else(|| {
+                memory.probes += 1;
+                let number = memory.probes;
                 let http = http.clone();
                 let started: Shared<Probe> = async move { probe(&http).await }.boxed().shared();
-                *state = State::Probing(
+                memory.state = State::Probing(
                     started
                         .downgrade()
                         .expect("A probe that was just started has not ended"),
+                    number,
                 );
-                started
+                (started, number)
             })
         };
 
-        let result = probe.clone().await;
+        let result = probe.await;
 
         // The first request that gets the result remembers it if it tells the version, and forgets the probe if it
         // failed, unless another probe has started since.
-        let mut state = self.lock();
-        let is_current = matches!(&*state, State::Probing(current) if current.upgrade().is_some_and(|current| current.ptr_eq(&probe)));
-        if is_current {
-            *state = match &result {
-                Ok(api_version) => State::Known(*api_version),
+        let mut memory = self.lock();
+        if matches!(memory.state, State::Probing(_, current) if current == number) {
+            memory.state = match &result {
+                Ok(api_version) => State::Known(*api_version, number),
                 Err(_) => State::Unknown,
             };
         }
-        result
+        result.map(|api_version| self.remembered(api_version, number))
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
-        // The state stays consistent even if a thread panicked while it held the lock.
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    /// The version of the API, as the probe with the given number found it out
+    fn remembered(&self, api_version: ApiVersion, probe: u64) -> RememberedApi<'_> {
+        match api_version {
+            ApiVersion::V1 => RememberedApi::V1,
+            ApiVersion::V2 => RememberedApi::V2(RememberedV2 { cell: self, probe }),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Memory> {
+        // The memory stays consistent even if a thread panicked while it held the lock.
+        self.memory.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 impl fmt::Debug for ApiVersionCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = match &*self.lock() {
+        let state = match &self.lock().state {
             State::Unknown => "Unknown".to_string(),
-            State::Probing(_) => "Probing".to_string(),
-            State::Known(api_version) => format!("Known({api_version:?})"),
+            State::Probing(..) => "Probing".to_string(),
+            State::Known(api_version, _) => format!("Known({api_version:?})"),
         };
         f.debug_struct("ApiVersionCell")
             .field("state", &state)

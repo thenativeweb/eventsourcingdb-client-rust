@@ -5,6 +5,7 @@ mod http2;
 mod outcome;
 mod probe;
 mod requests;
+mod rollback;
 mod server;
 mod stall_timeout;
 mod streams;

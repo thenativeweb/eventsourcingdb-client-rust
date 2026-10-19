@@ -54,7 +54,7 @@ if let Err(err) = result {
 
 ### Talking to Servers With and Without the v2 API
 
-The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it asks only once. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again.
+The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request.
 
 *Note that the v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to let it through. There is no fallback to `POST`.*
 
