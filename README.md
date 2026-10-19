@@ -683,7 +683,7 @@ In case you need to set up the client yourself, use the following functions to g
 
 ## Upgrading From Version 2
 
-Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offer it, and the v1 API with all others, see [Getting Started](#getting-started). It changes the following:
+Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offer it, and the v1 API with all others, see [Talking to Servers With and Without the v2 API](#talking-to-servers-with-and-without-the-v2-api). It changes the following:
 
 - `list_subjects` is now `read_subjects`, which takes the subject and an options object whose `recursive` option you have to set. Before, it read the subjects below the given base subject recursively, or below `/` for `None`:
 
