@@ -294,6 +294,40 @@ pub enum ContainerError {
     /// Error encoding the signing key
     #[error("Error encoding the signing key: {0}")]
     SigningKeyEncodingError(#[from] ed25519_dalek::pkcs8::Error),
+    /// Starting the container failed, since EventSourcingDB did not become reachable within the startup timeout in
+    /// any of the 3 containers that it tried, see
+    /// [`ContainerBuilder::with_startup_timeout`](crate::container::ContainerBuilder::with_startup_timeout)
+    #[error(
+        "failed to start the container, the database did not become reachable within {}s in any of {} containers",
+        .startup_timeout.as_secs_f64(),
+        crate::container::START_ATTEMPTS
+    )]
+    Unreachable {
+        /// The time that each container had, from creating it until EventSourcingDB answers
+        startup_timeout: Duration,
+    },
+    /// Starting the container failed, since it exited before EventSourcingDB became reachable, for example because
+    /// of an invalid configuration
+    #[error(
+        "failed to start the container, it exited before the database became reachable: {log_tail}"
+    )]
+    Exited {
+        /// The last 20 lines of the log of the container, which tell why it exited
+        log_tail: String,
+    },
+    /// Starting the container failed, since Docker failed, for example because the image does not exist, or because
+    /// Docker is not running
+    #[error("failed to start the container: {0}")]
+    DockerFailed(#[source] testcontainers::TestcontainersError),
+    /// Starting the container failed, and removing the container afterwards failed as well, so it may be left behind
+    #[error("{error}\nfailed to remove the container: {removal_error}")]
+    RemovalFailed {
+        /// The error that starting the container failed with
+        #[source]
+        error: Box<ContainerError>,
+        /// The error that removing the container failed with
+        removal_error: testcontainers::TestcontainersError,
+    },
 }
 
 /// Error type for the event
