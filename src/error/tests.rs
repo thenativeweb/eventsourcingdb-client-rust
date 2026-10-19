@@ -31,3 +31,17 @@ fn a_db_api_error_leaves_out_whether_it_is_from_eventsourcingdb() {
         r#"DbApiError { code: "", description: "bad gateway", details: {}, status: 502, retry_after: None }"#
     );
 }
+
+#[test]
+fn a_client_error_can_be_cloned_and_shares_the_error_it_wraps() {
+    let error = ClientError::from(io::Error::other("the connection was reset"));
+    let clone = error.clone();
+
+    match (&error, &clone) {
+        (ClientError::IoError(error), ClientError::IoError(clone)) => {
+            assert!(std::sync::Arc::ptr_eq(error, clone));
+        }
+        _ => panic!("Expected two IO errors, but got {error:?} and {clone:?}"),
+    }
+    assert_eq!(clone.to_string(), error.to_string());
+}

@@ -203,7 +203,7 @@ impl Http {
                 Err(ClientError::ReqwestError(error)) if was_refused_unprocessed(&error) => {
                     if resends == MAX_RESENDS {
                         // Nothing of the write reached the server, as if its body was never handed on.
-                        return (Err(error.into()), HandOver::default());
+                        return (Err(ClientError::ReqwestError(error)), HandOver::default());
                     }
                     resends += 1;
                 }
@@ -277,10 +277,10 @@ impl Http {
 /// The error that a stream fails with that the server ends before it is complete: a finite stream that ends before
 /// its end, and a stream of observed events that ends without an error.
 pub fn stream_ended_unexpectedly() -> ClientError {
-    ClientError::IoError(std::io::Error::new(
+    ClientError::IoError(Arc::new(std::io::Error::new(
         std::io::ErrorKind::UnexpectedEof,
         "The stream ended before it was complete",
-    ))
+    )))
 }
 
 /// Tells whether the response is from EventSourcingDB, which names itself in the `Server` header.

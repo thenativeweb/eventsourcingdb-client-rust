@@ -769,6 +769,16 @@ Version 3 of the SDK speaks the v2 API of EventSourcingDB with servers that offe
 
 - `ClientError::InvalidRequestMethod` is removed, since no request fails with it.
 
+- `ClientError` is `Clone`, so the errors of other crates in `ClientError::IoError`, `ClientError::ReqwestError`, `ClientError::SerdeJsonError`, and `ClientError::CloudeventsMessageError` are now in an `Arc`. Code that matches them and calls their methods keeps working. Code that moves the inner error out has to take it by reference instead, or clone what it needs:
+
+  ```rust
+  // Before, with fn handle(error: reqwest::Error)
+  Err(ClientError::ReqwestError(error)) => handle(error),
+
+  // After, with fn handle(error: &reqwest::Error)
+  Err(ClientError::ReqwestError(error)) => handle(&error),
+  ```
+
 - An error answer to a request that returns a stream, such as `read_events`, whose `Server` header does not name EventSourcingDB, for example one of a proxy in front of it, is a `ClientError::DbApiError` error with its status and text and without a code, as it already was for every other request. Before, it was a `ClientError::InvalidServerHeader` error:
 
   ```rust

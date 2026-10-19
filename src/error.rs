@@ -4,7 +4,7 @@ pub mod code;
 #[cfg(test)]
 mod tests;
 
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use reqwest::{self, StatusCode};
 use serde_json::{Map, Value};
@@ -13,12 +13,15 @@ use thiserror::Error;
 use crate::client::stall_timeout::is_stalled;
 
 /// Error type for the client
-#[derive(Debug, Error)]
+///
+/// It is [`Clone`], so that the same error can reach every request that waits for it, which is why the errors of
+/// other crates that are not [`Clone`] are in an [`Arc`].
+#[derive(Debug, Clone, Error)]
 #[non_exhaustive]
 pub enum ClientError {
-    /// An IO Error occurred
+    /// An IO Error occurred, which is in an [`Arc`], so that the error can be cloned
     #[error("An IO error occurred: {0}")]
-    IoError(#[source] std::io::Error),
+    IoError(#[source] Arc<std::io::Error>),
     /// The provided event type is invalid
     #[error("The provided event type is invalid")]
     InvalidEventType,
@@ -28,15 +31,15 @@ pub enum ClientError {
     /// There was a generic problem with pinging the DB
     #[error("Pinging the DB failed")]
     PingFailed,
-    /// There was a problem making a request to the DB
+    /// There was a problem making a request to the DB, which is in an [`Arc`], so that the error can be cloned
     #[error("The request failed with error: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    ReqwestError(#[source] Arc<reqwest::Error>),
     /// There was a problem parsing the URL
     #[error("The URL is invalid: {0}")]
     URLParseError(#[from] url::ParseError),
-    /// There was a problem with the JSON serialization
+    /// There was a problem with the JSON serialization, which is in an [`Arc`], so that the error can be cloned
     #[error("The JSON serialization failed: {0}")]
-    SerdeJsonError(#[from] serde_json::Error),
+    SerdeJsonError(#[source] Arc<serde_json::Error>),
     /// The DB reported an error, see [`DbApiError`]
     #[error(transparent)]
     DbApiError(#[from] DbApiError),
@@ -44,10 +47,10 @@ pub enum ClientError {
     /// The passed jsonschema is invalid
     #[error("The passed jsonschema is invalid")]
     JsonSchemaError,
-    /// There was a problem with the `cloudevents` message
+    /// There was a problem with the `cloudevents` message, which is in an [`Arc`], so that the error can be cloned
     #[cfg(feature = "cloudevents")]
     #[error("The CloudEvents message is invalid: {0}")]
-    CloudeventsMessageError(#[from] cloudevents::message::Error),
+    CloudeventsMessageError(#[source] Arc<cloudevents::message::Error>),
     /// The database returned an invalid response type
     #[error("The DB returned an invalid response type: {0}")]
     InvalidResponseType(String),
@@ -76,8 +79,27 @@ impl From<std::io::Error> for ClientError {
         if is_stalled(&error) {
             Self::ConnectionStalled
         } else {
-            Self::IoError(error)
+            Self::IoError(Arc::new(error))
         }
+    }
+}
+
+impl From<reqwest::Error> for ClientError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::ReqwestError(Arc::new(error))
+    }
+}
+
+impl From<serde_json::Error> for ClientError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::SerdeJsonError(Arc::new(error))
+    }
+}
+
+#[cfg(feature = "cloudevents")]
+impl From<cloudevents::message::Error> for ClientError {
+    fn from(error: cloudevents::message::Error) -> Self {
+        Self::CloudeventsMessageError(Arc::new(error))
     }
 }
 
