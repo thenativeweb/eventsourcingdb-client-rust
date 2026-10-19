@@ -21,11 +21,14 @@ polars = ["dep:polars"]
 testcontainer = ["dep:testcontainers", "dep:rand", "ed25519-dalek/rand_core"]
 
 [dependencies]
+bytes = "1.11.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 cloudevents-sdk = { version = "0.9.0", features = ["reqwest"], optional = true }
 futures = "0.3.32"
 futures-util = "0.3.31"
+h2 = "0.4.10"
 http = "1.3.1"
+http-body = "1.0.1"
 jsonschema = "0.33.0"
 reqwest = { version = "0.13.4", features = ["json", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -34,7 +37,7 @@ testcontainers = { version = "0.28.0", features = [
   "http_wait",
 ], optional = true }
 thiserror = "2.0.18"
-tokio = { version = "1.52.3", features = ["io-util", "time"] }
+tokio = { version = "1.52.3", features = ["io-util", "sync", "time"] }
 tokio-util = { version = "0.7.18", features = ["io"] }
 tokio-stream = { version = "0.1.18", features = ["io-util"] }
 typed-builder = "0.23.2"

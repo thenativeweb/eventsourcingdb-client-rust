@@ -1,6 +1,9 @@
 mod utils;
 
-use eventsourcingdb::{EventCandidate, Precondition, TraceInfo};
+use eventsourcingdb::{
+    EventCandidate, Precondition, TraceInfo,
+    error::{ClientError, code},
+};
 use serde_json::json;
 use utils::{
     assert_event_match_eventcandidate, assert_events_match_eventcandidates,
@@ -391,4 +394,28 @@ async fn write_single_event_with_traceparent_and_state() {
     println!("Response event: {response_event:?}");
 
     assert_event_match_eventcandidate(&response_event, &event, None, None);
+}
+
+#[tokio::test]
+async fn a_precondition_that_does_not_hold_is_reported_with_its_code() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let event_candidate = create_test_eventcandidate("/test", json!({"value": 1}));
+    client
+        .write_events(vec![event_candidate.clone()], vec![])
+        .await
+        .expect("Failed to write initial event");
+
+    let result = client
+        .write_events(
+            vec![event_candidate.clone()],
+            vec![Precondition::IsSubjectPristine {
+                subject: event_candidate.subject.clone(),
+            }],
+        )
+        .await;
+    assert!(
+        matches!(&result, Err(ClientError::DbApiError(error)) if error.code == code::PRECONDITION_VIOLATED),
+        "Expected a violated precondition, but got: {result:?}"
+    );
 }

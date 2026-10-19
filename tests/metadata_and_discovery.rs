@@ -1,5 +1,9 @@
 mod utils;
-use eventsourcingdb::Event;
+use eventsourcingdb::{
+    Event,
+    error::{ClientError, code},
+    request_options::ReadSubjectsOptions,
+};
 use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 use tokio_test::assert_err;
@@ -45,10 +49,12 @@ async fn register_invalid_event_schema() {
 }
 
 #[tokio::test]
-async fn list_all_subjects() {
+async fn read_all_subjects() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
-    let res = client.list_subjects(None).await;
+    let res = client
+        .read_subjects("/", ReadSubjectsOptions { recursive: true })
+        .await;
     match res {
         Ok(subjects) => {
             let subjects = subjects.collect::<Vec<_>>().await;
@@ -57,12 +63,12 @@ async fn list_all_subjects() {
                 "Expected no subjects, but got: {subjects:?}"
             );
         }
-        Err(err) => panic!("Failed to list subjects: {err:?}"),
+        Err(err) => panic!("Failed to read subjects: {err:?}"),
     }
 }
 
 #[tokio::test]
-async fn list_all_subjects_after_writing_events() {
+async fn read_all_subjects_after_writing_events() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     client
@@ -77,9 +83,9 @@ async fn list_all_subjects_after_writing_events() {
         .expect("Failed to write events");
 
     let mut subjects: Vec<_> = client
-        .list_subjects(None)
+        .read_subjects("/", ReadSubjectsOptions { recursive: true })
         .await
-        .expect("Failed to list subjects")
+        .expect("Failed to read subjects")
         .try_collect()
         .await
         .expect("Failed to read subjects");
@@ -88,10 +94,8 @@ async fn list_all_subjects_after_writing_events() {
     assert_eq!(subjects, ["/", "/test"]);
 }
 
-#[tokio::test]
-async fn list_scoped_subjects_after_writing_events() {
-    let container = create_test_container().await;
-    let client = container.get_client().await.unwrap();
+/// Writes events to `/test`, a subject below it, and another subject.
+async fn write_events_to_nested_subjects(client: &eventsourcingdb::Client) {
     client
         .write_events(
             vec![
@@ -103,11 +107,18 @@ async fn list_scoped_subjects_after_writing_events() {
         )
         .await
         .expect("Failed to write events");
+}
+
+#[tokio::test]
+async fn read_subjects_recursively_after_writing_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    write_events_to_nested_subjects(&client).await;
 
     let mut subjects: Vec<_> = client
-        .list_subjects(Some("/test"))
+        .read_subjects("/test", ReadSubjectsOptions { recursive: true })
         .await
-        .expect("Failed to list subjects")
+        .expect("Failed to read subjects")
         .try_collect()
         .await
         .expect("Failed to read subjects");
@@ -117,7 +128,35 @@ async fn list_scoped_subjects_after_writing_events() {
 }
 
 #[tokio::test]
-async fn list_all_event_types() {
+async fn read_subjects_not_recursively_after_writing_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    write_events_to_nested_subjects(&client).await;
+
+    let subjects: Vec<_> = client
+        .read_subjects("/test", ReadSubjectsOptions { recursive: false })
+        .await
+        .expect("Failed to read subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    assert_eq!(subjects, ["/test"]);
+
+    let subjects: Vec<_> = client
+        .read_subjects("/missing", ReadSubjectsOptions { recursive: false })
+        .await
+        .expect("Failed to read subjects")
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+    assert!(
+        subjects.is_empty(),
+        "Expected no subjects, but got: {subjects:?}"
+    );
+}
+
+#[tokio::test]
+async fn read_all_event_types() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
     let test_event_type = "io.eventsourcingdb.test";
@@ -137,7 +176,7 @@ async fn list_all_event_types() {
         .register_event_schema(test_event_type, &schema)
         .await
         .expect("Failed to register event schema");
-    let res = client.list_event_types().await;
+    let res = client.read_event_types().await;
     match res {
         Ok(event_types) => {
             let mut event_types = event_types.collect::<Vec<_>>().await;
@@ -148,9 +187,9 @@ async fn list_all_event_types() {
             assert!(event_types[0].is_ok(), "Expected event type to be ok");
             let response_event_type = event_types.pop().unwrap().unwrap();
             assert_eq!(
-                response_event_type.name, test_event_type,
+                response_event_type.ty, test_event_type,
                 "Expected event type to be 'io.eventsourcingdb.test', but got: {:?}",
-                response_event_type.name
+                response_event_type.ty
             );
             assert_eq!(
                 response_event_type.schema.as_ref(),
@@ -160,12 +199,12 @@ async fn list_all_event_types() {
                 response_event_type.schema
             );
             assert!(
-                response_event_type.is_phantom,
-                "Expected event type is_phantom to be true, but got: {:?}",
-                response_event_type.is_phantom
+                !response_event_type.has_events,
+                "Expected event type has_events to be false, but got: {:?}",
+                response_event_type.has_events
             );
         }
-        Err(err) => panic!("Failed to list event types: {err:?}"),
+        Err(err) => panic!("Failed to read event types: {err:?}"),
     }
 }
 
@@ -194,9 +233,9 @@ async fn read_single_event_type() {
     match res {
         Ok(event_type) => {
             assert_eq!(
-                event_type.name, test_event_type,
+                event_type.ty, test_event_type,
                 "Expected event type to be 'io.eventsourcingdb.test', but got: {:?}",
-                event_type.name
+                event_type.ty
             );
             assert_eq!(
                 event_type.schema.as_ref(),
@@ -206,9 +245,9 @@ async fn read_single_event_type() {
                 event_type.schema
             );
             assert!(
-                event_type.is_phantom,
-                "Expected event type is_phantom to be true, but got: {:?}",
-                event_type.is_phantom
+                !event_type.has_events,
+                "Expected event type has_events to be false, but got: {:?}",
+                event_type.has_events
             );
         }
         Err(err) => panic!("Failed to read event type: {err:?}"),
@@ -342,7 +381,39 @@ async fn verify_event_signature_with_broken_signature() {
     );
 }
 
-// TODO!: add list event types test after writing to db
+#[tokio::test]
+async fn read_event_types_after_writing_events() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    client
+        .write_events(
+            vec![utils::create_test_eventcandidate(
+                "/test",
+                json!({"value": 1}),
+            )],
+            vec![],
+        )
+        .await
+        .expect("Failed to write events");
+
+    let event_types: Vec<_> = client
+        .read_event_types()
+        .await
+        .expect("Failed to read event types")
+        .try_collect()
+        .await
+        .expect("Failed to read event types");
+    assert_eq!(event_types.len(), 1);
+    assert_eq!(event_types[0].ty, "io.eventsourcingdb.test");
+    assert!(event_types[0].has_events);
+    assert_eq!(event_types[0].schema, None);
+
+    let event_type = client
+        .read_event_type("io.eventsourcingdb.test")
+        .await
+        .expect("Failed to read event type");
+    assert!(event_type.has_events);
+}
 
 #[tokio::test]
 async fn get_signing_key_returns_the_key_the_verification_key_belongs_to() {
@@ -365,4 +436,37 @@ async fn get_signing_key_returns_none_without_a_signing_key() {
         .await
         .expect("Failed to start test container");
     assert!(container.get_signing_key().is_none());
+}
+
+#[tokio::test]
+async fn reading_an_unknown_event_type_is_reported_with_its_code() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let result = client.read_event_type("io.eventsourcingdb.unknown").await;
+    assert!(
+        matches!(&result, Err(ClientError::DbApiError(error)) if error.code == code::EVENT_TYPE_UNKNOWN),
+        "Expected an unknown event type, but got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn registering_an_event_schema_twice_is_reported_with_its_code() {
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let schema = json!({
+        "type": "object",
+        "properties": { "value": { "type": "number" } },
+    });
+    client
+        .register_event_schema("io.eventsourcingdb.test", &schema)
+        .await
+        .expect("Failed to register event schema");
+
+    let result = client
+        .register_event_schema("io.eventsourcingdb.test", &schema)
+        .await;
+    assert!(
+        matches!(&result, Err(ClientError::DbApiError(error)) if error.code == code::EVENT_SCHEMA_ALREADY_REGISTERED),
+        "Expected an event schema that is already registered, but got: {result:?}"
+    );
 }

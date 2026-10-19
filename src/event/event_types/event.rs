@@ -221,17 +221,16 @@ impl Event {
     /// ```
     ///
     /// # Errors
-    /// Returns [`EventError::HashVerificationFailed`] if the hash is invalid.
-    /// If the hash is of a version the SDK does not support, such as `esdb:hash:v3:…`, it returns the same error with an
-    /// empty `actual` hash, and the message of the error names the version.
+    /// Returns [`EventError::HashVerificationFailed`] if the hash is invalid, and
+    /// [`EventError::UnsupportedHashVersion`], which names the version, if the hash is of a version the SDK does not
+    /// support, such as `esdb:hash:v3:…`.
     pub fn verify_hash(&self) -> Result<(), EventError> {
         let actual = match HashVersion::of(&self.hash) {
             HashVersion::V1 => self.compute_hash_v1(),
             HashVersion::V2 => self.compute_hash_v2(),
-            HashVersion::Unsupported(_) => {
-                return Err(EventError::HashVerificationFailed {
-                    expected: self.hash.clone(),
-                    actual: String::new(),
+            HashVersion::Unsupported(version) => {
+                return Err(EventError::UnsupportedHashVersion {
+                    version: version.to_string(),
                 });
             }
         };
@@ -302,8 +301,9 @@ impl Event {
     /// To do this, the hash of the event is verified first before checking the signature against that hash.
     ///
     /// # Errors
-    /// Returns an error if the signature is missing or malformed, or if the signature
-    /// verification fails.
+    /// Returns the errors of [`Event::verify_hash`] if the hash can not be verified, [`EventError::MissingSignature`]
+    /// if the event has no signature, [`EventError::MalformedSignature`] if the signature can not be decoded, and
+    /// [`EventError::SignatureVerificationFailed`] if the signature is invalid.
     pub fn verify_signature(&self, public_key: &VerifyingKey) -> Result<(), EventError> {
         const SIGNATURE_PREFIX: &str = "esdb:signature:v1:";
 

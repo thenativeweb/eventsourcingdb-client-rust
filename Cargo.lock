@@ -981,13 +981,16 @@ dependencies = [
 name = "eventsourcingdb"
 version = "2.4.0"
 dependencies = [
+ "bytes",
  "chrono",
  "cloudevents-sdk",
  "ed25519-dalek",
  "futures",
  "futures-util",
+ "h2",
  "hex",
  "http",
+ "http-body",
  "jsonschema",
  "polars",
  "rand",

@@ -40,14 +40,23 @@ use ed25519_dalek::{
     pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
 };
 use rand::prelude::ThreadRng;
+use std::time::Duration;
+
 use testcontainers::{
-    ContainerAsync, CopyDataSource, GenericImage,
-    core::{ContainerPort, ImageExt, WaitFor, wait::HttpWaitStrategy},
+    ContainerAsync, CopyDataSource, GenericImage, TestcontainersError,
+    core::{ContainerPort, ImageExt, error::WaitContainerError},
     runners::AsyncRunner,
 };
+use tokio::time::{Instant, sleep};
 use url::{Host, Url};
 
 use crate::{client::Client, error::ContainerError};
+
+/// How long starting the container may take until EventSourcingDB answers, which is generous, since a busy Docker
+/// may take far longer than usual to start a container
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to wait between two attempts to reach EventSourcingDB while the container starts
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Builder for the [Container].
 ///
@@ -126,10 +135,11 @@ impl ContainerBuilder {
     /// This call will transform the builder into a running container.
     /// It takes care of starting the container and waiting for it to be ready by waiting for the
     /// [ping](https://docs.eventsourcingdb.io/reference/api-overview/#authentication)
-    /// endpoint to respond since that doesn't require authentication.
+    /// endpoint to respond since that doesn't require authentication. It waits up to 60 seconds.
     ///
     /// # Errors
-    /// This function will return an error if the container could not be started.
+    /// This function will return an error if the container could not be started, if EventSourcingDB does not answer
+    /// within 60 seconds, and at once if the container exits before, naming its exit code and its last output.
     pub async fn start(self) -> Result<Container, ContainerError> {
         let http_port = self.internal_port.as_u16().to_string();
         let mut cmd_args = vec![
@@ -142,14 +152,11 @@ impl ContainerBuilder {
             "--http-port",
             &http_port,
         ];
+        // The container is ready once EventSourcingDB answers, which wait_until_ready waits for, instead of the
+        // HTTP wait of testcontainers, which looks up the mapped port only once.
         let mut test_container = GenericImage::new(self.image_name, self.image_tag)
             .with_exposed_port(self.internal_port)
-            .with_wait_for(WaitFor::Http(Box::new(
-                HttpWaitStrategy::new("/api/v1/ping")
-                    .with_port(self.internal_port)
-                    .with_expected_status_code(200u16),
-            )))
-            .with_startup_timeout(std::time::Duration::from_secs(10));
+            .with_startup_timeout(STARTUP_TIMEOUT);
         if let Some(signing_key) = &self.signing_key {
             // if signing is enabled, we need to add the signing key to the command args
             cmd_args.push("--signing-key-file=/tmp/signing_key.pem");
@@ -161,6 +168,7 @@ impl ContainerBuilder {
             );
         }
         let instance = test_container.with_cmd(cmd_args).start().await?;
+        wait_until_ready(&instance, self.internal_port).await?;
         Ok(Container {
             internal_port: self.internal_port,
             api_token: self.api_token.clone(),
@@ -169,6 +177,74 @@ impl ContainerBuilder {
             instance,
         })
     }
+}
+
+/// Waits until EventSourcingDB in the container answers a ping, for at most the startup timeout.
+///
+/// Docker may report the port that it maps the port of the container to only a while after it started the container,
+/// especially when it is busy, so looking up the port is repeated as well as the ping.
+async fn wait_until_ready(
+    instance: &ContainerAsync<GenericImage>,
+    internal_port: ContainerPort,
+) -> Result<(), ContainerError> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let client = reqwest::Client::builder()
+        .timeout(POLL_INTERVAL * 10)
+        .build()
+        .map_err(|error| TestcontainersError::other(error.to_string()))?;
+
+    loop {
+        if let Ok(host_port) = instance.get_host_port_ipv4(internal_port).await {
+            let host = instance.get_host().await?;
+            let is_ready = client
+                .get(format!("http://{host}:{host_port}/api/v1/ping"))
+                .send()
+                .await
+                .is_ok_and(|response| response.status().is_success());
+            if is_ready {
+                return Ok(());
+            }
+        }
+        // A container that exited never becomes ready, so waiting longer is pointless. A busy Docker may fail to tell,
+        // which is retried as a failed lookup of the port is.
+        if let Ok(Some(exit_code)) = instance.exit_code().await {
+            return Err(exited_error(instance, exit_code).await.into());
+        }
+        if Instant::now() >= deadline {
+            return Err(TestcontainersError::from(WaitContainerError::StartupTimeout).into());
+        }
+        sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Describes a container that exited before EventSourcingDB answered, with its exit code and the last lines of its
+/// output, which tell why it exited.
+async fn exited_error(
+    instance: &ContainerAsync<GenericImage>,
+    exit_code: i64,
+) -> TestcontainersError {
+    /// How many of the last lines of stdout and stderr the error names
+    const LAST_LINES: usize = 10;
+
+    let last_lines = |output: Vec<u8>| {
+        let output = String::from_utf8_lossy(&output).into_owned();
+        let lines: Vec<&str> = output.lines().collect();
+        lines[lines.len().saturating_sub(LAST_LINES)..].join("\n")
+    };
+    let stdout = instance
+        .stdout_to_vec()
+        .await
+        .map(last_lines)
+        .unwrap_or_default();
+    let stderr = instance
+        .stderr_to_vec()
+        .await
+        .map(last_lines)
+        .unwrap_or_default();
+
+    TestcontainersError::other(format!(
+        "The container exited with code {exit_code} before EventSourcingDB answered. The last lines of its stdout:\n{stdout}\nThe last lines of its stderr:\n{stderr}"
+    ))
 }
 
 /// A running test container for the [EventSourcingDB](https://www.eventsourcingdb.io/).

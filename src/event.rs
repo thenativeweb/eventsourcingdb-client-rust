@@ -6,7 +6,6 @@ mod trace_info;
 // Reexport relevant types to flatten the module graph for consumers and
 // keep private encapsulation of implementation details.
 pub use event_types::event::Event;
-pub(crate) use event_types::event::HashVersion;
 pub use event_types::event_candidate::EventCandidate;
 pub use event_types::management_event::ManagementEvent;
 pub use trace_info::TraceInfo;

@@ -8,7 +8,7 @@ async fn main() {
     let api_token = db.get_api_token();
     let client = Client::new(base_url, api_token);
 
-    let result = client.list_event_types().await;
+    let result = client.read_event_types().await;
 
     match result {
         Err(err) => panic!("{}", err),
