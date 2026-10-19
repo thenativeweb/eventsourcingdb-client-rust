@@ -18,6 +18,8 @@ pub const GUARD_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct Request {
     pub method: String,
     pub path: String,
+    /// The value of the `Authorization` header, if the request has one
+    pub authorization: Option<String>,
     pub body: String,
 }
 
@@ -181,6 +183,7 @@ async fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     let path = parts.next()?.to_string();
 
     let mut content_length = 0;
+    let mut authorization = None;
     loop {
         let mut line = String::new();
         if socket.read_line(&mut line).await.ok()? == 0 {
@@ -189,8 +192,13 @@ async fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
         if line == "\r\n" {
             break;
         }
-        if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("content-length") {
             content_length = value.trim().parse().expect("Invalid content length");
+        } else if name.eq_ignore_ascii_case("authorization") {
+            authorization = Some(value.trim().to_string());
         }
     }
     let mut body = vec![0; content_length];
@@ -199,6 +207,7 @@ async fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     Some(Request {
         method,
         path,
+        authorization,
         body: String::from_utf8(body).expect("The request body is no UTF-8"),
     })
 }

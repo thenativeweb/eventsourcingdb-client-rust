@@ -11,6 +11,8 @@ pub struct PingRequest;
 impl ClientRequest for PingRequest {
     const URL_PATH: &'static str = "/api/v1/ping";
     const METHOD: Method = Method::GET;
+    // Pinging needs no API token.
+    const SENDS_API_TOKEN: bool = false;
 }
 
 impl OneShotRequest for PingRequest {

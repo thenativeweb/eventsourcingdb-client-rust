@@ -133,7 +133,8 @@ impl fmt::Debug for ApiVersionCell {
 /// Returns the error of the request if it fails, and an error for every other answer, such as one with status `5xx`,
 /// since that tells nothing about the API the server offers.
 pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
-    let request = http.request(Method::GET, v2::PING_PATH, None::<&()>)?;
+    // Pinging needs no API token, so the probe sends none.
+    let request = http.request_without_api_token(Method::GET, v2::PING_PATH, None::<&()>)?;
     let response = http.send(request).await?;
 
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);

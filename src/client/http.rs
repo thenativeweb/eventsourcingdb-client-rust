@@ -143,7 +143,29 @@ impl Http {
         path: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Request, ClientError> {
-        let request = self.request_builder(method, path)?;
+        Self::build_request(self.request_builder(method, path)?, body)
+    }
+
+    /// Builds a request to the given path as [`Http::request`] does, but without the API token, for a route that
+    /// needs none, such as the ping, since the API token goes only where it is needed.
+    ///
+    /// # Errors
+    /// Returns an error if the URL is invalid, or if the body can not be serialized.
+    pub fn request_without_api_token<T: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&T>,
+    ) -> Result<reqwest::Request, ClientError> {
+        let url = self.base_url.join(path)?;
+        Self::build_request(self.reqwest.request(method, url), body)
+    }
+
+    /// Adds the body as JSON to the request, if there is one, and builds the request.
+    fn build_request<T: Serialize + ?Sized>(
+        request: reqwest::RequestBuilder,
+        body: Option<&T>,
+    ) -> Result<reqwest::Request, ClientError> {
         let request = match body {
             Some(body) => request
                 .header(header::CONTENT_TYPE, "application/json")

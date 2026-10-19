@@ -255,8 +255,11 @@ async fn request_streaming<T: DeserializeOwned + Send + 'static, B: Serialize + 
 }
 
 pub async fn ping(http: &Http) -> Result<(), ClientError> {
-    let event: ManagementEvent =
-        request_single(http, Method::GET, PING_PATH, None::<&()>, ITEM_TYPE_EVENT).await?;
+    // Pinging needs no API token, so the request sends none.
+    let request = http.request_without_api_token(Method::GET, PING_PATH, None::<&()>)?;
+    let response = send_request(http, request).await?;
+    let envelope: Envelope = http.read_json(response).await?;
+    let event: ManagementEvent = parse_envelope(&envelope, ITEM_TYPE_EVENT)?;
     (event.ty() == "io.eventsourcingdb.api.ping-received")
         .then_some(())
         .ok_or(ClientError::PingFailed)

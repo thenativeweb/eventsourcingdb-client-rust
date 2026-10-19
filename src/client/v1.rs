@@ -65,6 +65,9 @@ pub trait ClientRequest {
         Self::METHOD
     }
 
+    /// Whether the request sends the API token, which only a request to a route that needs none does not
+    const SENDS_API_TOKEN: bool = true;
+
     /// Returns the body for the request
     fn body(&self) -> Option<Result<impl Serialize, ClientError>> {
         None::<Result<(), _>>
@@ -264,7 +267,11 @@ async fn send<R: ClientRequest>(
 /// Builds the request, which sends nothing yet.
 fn build<R: ClientRequest>(http: &Http, endpoint: &R) -> Result<reqwest::Request, ClientError> {
     let body = endpoint.body().transpose()?;
-    http.request(endpoint.method(), endpoint.url_path(), body.as_ref())
+    if R::SENDS_API_TOKEN {
+        http.request(endpoint.method(), endpoint.url_path(), body.as_ref())
+    } else {
+        http.request_without_api_token(endpoint.method(), endpoint.url_path(), body.as_ref())
+    }
 }
 
 /// Sends the request that was built for the endpoint, and checks the response as [`send`] does.

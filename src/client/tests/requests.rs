@@ -4,8 +4,8 @@ use futures::TryStreamExt;
 use serde_json::{Value, json};
 
 use super::{
-    Api, Reply, Request, TestServer, create_client, is_probe, management_event, probe_reply,
-    skip_probe, start_server, test_candidate,
+    Api, BOTH_APIS, Reply, Request, TestServer, create_client, is_probe, management_event,
+    probe_reply, skip_probe, start_server, test_candidate,
 };
 use crate::{
     Precondition,
@@ -305,5 +305,72 @@ async fn read_subjects_through_the_v1_api_compares_the_subject_as_the_server_nor
             .await
             .expect("Failed to read subjects");
         assert_eq!(subjects, expected, "Unexpected subjects for {subject}");
+    }
+}
+
+#[tokio::test]
+async fn the_probe_and_ping_send_no_api_token_and_every_other_request_does() {
+    for api in BOTH_APIS {
+        let mut lines = vec![api.subject("/")];
+        lines.extend(api.end());
+        let ping = Reply::lines(&[api.ping_answer()]);
+        let mut server = TestServer::start(move |request: &Request| {
+            if request.path.ends_with("/ping") {
+                if is_probe(request) && api == Api::V1 {
+                    probe_reply(Api::V1)
+                } else {
+                    ping.clone()
+                }
+            } else if request.path == api.verify_api_token_path() {
+                api.verify_api_token_answer()
+            } else {
+                Reply::lines(&lines)
+            }
+        })
+        .await;
+        let client = create_client(&server);
+
+        client.ping().await.expect("Failed to ping");
+        client
+            .verify_api_token()
+            .await
+            .expect("Failed to verify the API token");
+        let _: Vec<String> = client
+            .read_subjects("/", ReadSubjectsOptions { recursive: true })
+            .await
+            .expect("Failed to read subjects")
+            .try_collect()
+            .await
+            .expect("Failed to read subjects");
+
+        let requests = server.received();
+        let paths: Vec<_> = requests
+            .iter()
+            .map(|request| request.path.as_str())
+            .collect();
+        assert_eq!(
+            paths.len(),
+            4,
+            "Unexpected requests through {api:?}: {paths:?}"
+        );
+        // The probe and the ping need no API token, so they send none.
+        assert!(is_probe(&requests[0]));
+        assert_eq!(
+            requests[0].authorization, None,
+            "The probe sent an API token"
+        );
+        assert!(requests[1].path.ends_with("/ping"));
+        assert_eq!(
+            requests[1].authorization, None,
+            "The ping through {api:?} sent an API token"
+        );
+        for request in &requests[2..] {
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer secret"),
+                "Expected the API token for {}",
+                request.path
+            );
+        }
     }
 }
