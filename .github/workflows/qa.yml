@@ -32,3 +32,32 @@ jobs:
         build-warnings: ""
     - name: Run QA
       run: make qa
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # The polars feature needs a newer Rust than the crate itself, because
+      # of sysinfo. This must match the README line about the polars feature.
+      POLARS_RUST_VERSION: "1.95"
+
+    steps:
+    - name: Clone repository
+      uses: actions/checkout@v7.0.1
+    - name: Read minimum Rust version
+      run: |
+        msrv=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version // empty')
+        test -n "$msrv"
+        echo "MSRV=$msrv" >> "$GITHUB_ENV"
+    - name: Use Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+      with:
+        toolchain: ${{ env.MSRV }}, ${{ env.POLARS_RUST_VERSION }}
+        cache: true
+        build-warnings: ""
+    - name: Check with the minimum Rust version
+      run: cargo +"$MSRV" check --locked
+    - name: Check the polars feature
+      run: cargo +"$POLARS_RUST_VERSION" check --locked --features polars
