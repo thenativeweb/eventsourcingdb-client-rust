@@ -58,6 +58,6 @@ jobs:
         cache: true
         build-warnings: ""
     - name: Check with the minimum Rust version
-      run: cargo +"$MSRV" check --locked
+      run: cargo +"$MSRV" check --locked --features cloudevents,testcontainer
     - name: Check the polars feature
       run: cargo +"$POLARS_RUST_VERSION" check --locked --features polars
