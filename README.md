@@ -10,7 +10,7 @@ This client SDK includes support for [Testcontainers](https://testcontainers.com
 
 ## Getting Started
 
-The client SDK requires Rust 1.95 or later.
+The client SDK requires Rust 1.88 or later, and its optional `polars` feature requires Rust 1.95 or later, because of `sysinfo`.
 
 Install the client SDK:
 
