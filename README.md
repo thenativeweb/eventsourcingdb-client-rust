@@ -10,6 +10,8 @@ This client SDK includes support for [Testcontainers](https://testcontainers.com
 
 ## Getting Started
 
+The client SDK requires Rust 1.95 or later.
+
 Install the client SDK:
 
 ```shell
