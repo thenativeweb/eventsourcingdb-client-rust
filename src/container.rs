@@ -207,17 +207,28 @@ impl ContainerBuilder {
 ///
 /// Testcontainers creates the container before it starts it, but owns it only once it started, so a start that fails
 /// in between, for example since it runs into the startup timeout, leaves the container behind. So the containers of
-/// the start are found by its label and removed. If that fails as well, the error names both failures.
+/// the start are found by its label and removed, unless testcontainers is told to keep containers. If removing them
+/// fails as well, the error names both failures.
 async fn remove_containers_of_failed_start(
     start_id: &str,
     error: TestcontainersError,
 ) -> TestcontainersError {
+    // A container is kept to debug it if testcontainers is told so, which it then does for its own containers too.
+    if keeps_containers(std::env::var("TESTCONTAINERS_COMMAND").ok().as_deref()) {
+        return error;
+    }
     match remove_containers_of_start(start_id).await {
         Ok(()) => error,
         Err(removal_error) => TestcontainersError::other(format!(
             "{error}, and removing the container of the failed start failed: {removal_error}"
         )),
     }
+}
+
+/// Tells whether testcontainers keeps its containers instead of removing them, as the given value of the environment
+/// variable `TESTCONTAINERS_COMMAND` tells it with `keep`.
+fn keeps_containers(command: Option<&str>) -> bool {
+    command == Some("keep")
 }
 
 /// Removes every container that carries the label of the given start, whether it runs or not.

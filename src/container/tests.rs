@@ -65,3 +65,13 @@ async fn a_start_that_runs_into_the_timeout_leaves_no_container_behind() {
         "Expected the failed start to remove its container"
     );
 }
+
+#[test]
+fn containers_are_kept_only_if_testcontainers_is_told_to_keep_them() {
+    use super::keeps_containers;
+
+    assert!(keeps_containers(Some("keep")));
+    assert!(!keeps_containers(Some("remove")));
+    assert!(!keeps_containers(Some("")));
+    assert!(!keeps_containers(None));
+}
