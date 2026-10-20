@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    future::Future,
+    future::{Future, ready},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -383,16 +383,16 @@ struct LatePort {
 }
 
 impl Inspect for LatePort {
-    async fn address(&self) -> Result<Option<String>, TestcontainersError> {
-        Ok(match self.lookups.fetch_add(1, Ordering::SeqCst) + 1 {
+    fn address(&self) -> impl Future<Output = Result<Option<String>, TestcontainersError>> {
+        ready(Ok(match self.lookups.fetch_add(1, Ordering::SeqCst) + 1 {
             1..=2 => None,
             3..=5 => Some(self.stale.clone()),
             _ => Some(self.database.clone()),
-        })
+        }))
     }
 
-    async fn exit_code(&self) -> Result<Option<i64>, TestcontainersError> {
-        Ok(None)
+    fn exit_code(&self) -> impl Future<Output = Result<Option<i64>, TestcontainersError>> {
+        ready(Ok(None))
     }
 }
 
@@ -424,18 +424,20 @@ struct Unpublished {
 }
 
 impl Inspect for Unpublished {
-    async fn address(&self) -> Result<Option<String>, TestcontainersError> {
-        if self.fails_to_look_up_the_port {
-            return Err(TestcontainersError::other("Docker failed"));
-        }
-        Ok(None)
+    fn address(&self) -> impl Future<Output = Result<Option<String>, TestcontainersError>> {
+        ready(if self.fails_to_look_up_the_port {
+            Err(TestcontainersError::other("Docker failed"))
+        } else {
+            Ok(None)
+        })
     }
 
-    async fn exit_code(&self) -> Result<Option<i64>, TestcontainersError> {
-        if self.fails_to_inspect {
-            return Err(TestcontainersError::other("Docker failed"));
-        }
-        Ok(self.exit_code)
+    fn exit_code(&self) -> impl Future<Output = Result<Option<i64>, TestcontainersError>> {
+        ready(if self.fails_to_inspect {
+            Err(TestcontainersError::other("Docker failed"))
+        } else {
+            Ok(self.exit_code)
+        })
     }
 }
 
@@ -708,7 +710,7 @@ async fn fails_at_once_with_the_error_of_docker_if_the_image_does_not_exist() {
             .is_some_and(|source| source.to_string() == docker_error.to_string())
     );
     // Pulling the image fails before any container is created.
-    assert!(docker.attempt_ids().is_empty());
+    assert_eq!(docker.attempt_ids(), Vec::<String>::new());
 }
 
 #[tokio::test]
