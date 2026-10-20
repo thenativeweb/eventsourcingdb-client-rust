@@ -34,7 +34,7 @@ use crate::{
     event::{Event, EventCandidate, ManagementEvent},
     request_options::EventType,
 };
-use api_version::{ApiVersion, ApiVersionCell};
+use api_version::{ApiVersionCell, RememberedApi};
 use futures::Stream;
 use http::Http;
 pub use precondition::Precondition;
@@ -51,8 +51,10 @@ const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks
 /// the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the
-/// v1 API if not. It remembers the answer, so it asks only once. If asking fails, for example since the server is
-/// not reachable, the first request fails with that error, and the next request asks again.
+/// v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example since
+/// the server is not reachable, the first request fails with that error, and the next request asks again. If the
+/// server answers a path of the v2 API with status `404` or `405`, for example after it was rolled back to a version
+/// without it, the client asks again on the next request.
 ///
 /// The v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of the server has to let it
 /// through.
@@ -175,7 +177,7 @@ impl Client {
     ///
     /// # Errors
     /// Returns the error that finding out the version failed with.
-    async fn api_version(&self) -> Result<ApiVersion, ClientError> {
+    async fn api_version(&self) -> Result<RememberedApi<'_>, ClientError> {
         self.api_version.get_or_probe(&self.http).await
     }
 
@@ -198,8 +200,8 @@ impl Client {
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn ping(&self) -> Result<(), ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::ping(&self.http).await,
-            ApiVersion::V2 => v2::ping(&self.http).await,
+            RememberedApi::V1 => v1::ping(&self.http).await,
+            RememberedApi::V2(remembered) => v2::ping(&self.http, remembered).await,
         }
     }
 
@@ -232,8 +234,10 @@ impl Client {
         options: Option<request_options::ReadEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::read_events(&self.http, subject, options).await,
-            ApiVersion::V2 => v2::read_events(&self.http, subject, options).await,
+            RememberedApi::V1 => v1::read_events(&self.http, subject, options).await,
+            RememberedApi::V2(remembered) => {
+                v2::read_events(&self.http, remembered, subject, options).await
+            }
         }
     }
 
@@ -274,8 +278,10 @@ impl Client {
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn read_event_type(&self, event_type: &str) -> Result<EventType, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::read_event_type(&self.http, event_type).await,
-            ApiVersion::V2 => v2::read_event_type(&self.http, event_type).await,
+            RememberedApi::V1 => v1::read_event_type(&self.http, event_type).await,
+            RememberedApi::V2(remembered) => {
+                v2::read_event_type(&self.http, remembered, event_type).await
+            }
         }
     }
 
@@ -326,8 +332,10 @@ impl Client {
         options: Option<request_options::ObserveEventsOptions<'a>>,
     ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::observe_events(&self.http, subject, options).await,
-            ApiVersion::V2 => v2::observe_events(&self.http, subject, options).await,
+            RememberedApi::V1 => v1::observe_events(&self.http, subject, options).await,
+            RememberedApi::V2(remembered) => {
+                v2::observe_events(&self.http, remembered, subject, options).await
+            }
         }
     }
 
@@ -350,8 +358,8 @@ impl Client {
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn verify_api_token(&self) -> Result<(), ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::verify_api_token(&self.http).await,
-            ApiVersion::V2 => v2::verify_api_token(&self.http).await,
+            RememberedApi::V1 => v1::verify_api_token(&self.http).await,
+            RememberedApi::V2(remembered) => v2::verify_api_token(&self.http, remembered).await,
         }
     }
 
@@ -399,8 +407,10 @@ impl Client {
         jsonschema::meta::validate(schema).map_err(|_| ClientError::JsonSchemaError)?;
 
         match self.api_version().await? {
-            ApiVersion::V1 => v1::register_event_schema(&self.http, event_type, schema).await,
-            ApiVersion::V2 => v2::register_event_schema(&self.http, event_type, schema).await,
+            RememberedApi::V1 => v1::register_event_schema(&self.http, event_type, schema).await,
+            RememberedApi::V2(remembered) => {
+                v2::register_event_schema(&self.http, remembered, event_type, schema).await
+            }
         }
     }
 
@@ -459,8 +469,10 @@ impl Client {
         options: request_options::ReadSubjectsOptions,
     ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::read_subjects(&self.http, subject, options).await,
-            ApiVersion::V2 => v2::read_subjects(&self.http, subject, options).await,
+            RememberedApi::V1 => v1::read_subjects(&self.http, subject, options).await,
+            RememberedApi::V2(remembered) => {
+                v2::read_subjects(&self.http, remembered, subject, options).await
+            }
         }
     }
 
@@ -491,8 +503,8 @@ impl Client {
         &self,
     ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::read_event_types(&self.http).await,
-            ApiVersion::V2 => v2::read_event_types(&self.http).await,
+            RememberedApi::V1 => v1::read_event_types(&self.http).await,
+            RememberedApi::V2(remembered) => v2::read_event_types(&self.http, remembered).await,
         }
     }
 
@@ -529,8 +541,10 @@ impl Client {
         preconditions: Vec<Precondition>,
     ) -> Result<Vec<Event>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::write_events(&self.http, events, preconditions).await,
-            ApiVersion::V2 => v2::write_events(&self.http, &events, &preconditions).await,
+            RememberedApi::V1 => v1::write_events(&self.http, events, preconditions).await,
+            RememberedApi::V2(remembered) => {
+                v2::write_events(&self.http, remembered, &events, &preconditions).await
+            }
         }
     }
 
@@ -565,8 +579,10 @@ impl Client {
         query: &str,
     ) -> Result<impl Stream<Item = Result<serde_json::Value, ClientError>>, ClientError> {
         match self.api_version().await? {
-            ApiVersion::V1 => v1::run_eventql_query(&self.http, query).await,
-            ApiVersion::V2 => v2::run_eventql_query(&self.http, query).await,
+            RememberedApi::V1 => v1::run_eventql_query(&self.http, query).await,
+            RememberedApi::V2(remembered) => {
+                v2::run_eventql_query(&self.http, remembered, query).await
+            }
         }
     }
 }

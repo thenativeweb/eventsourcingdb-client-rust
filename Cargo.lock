@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "eventsourcingdb"
-version = "3.0.1"
+version = "3.1.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -992,6 +992,7 @@ dependencies = [
  "http",
  "http-body",
  "jsonschema",
+ "log",
  "polars",
  "rand",
  "reqwest 0.13.5",

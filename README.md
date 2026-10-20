@@ -54,7 +54,7 @@ if let Err(err) = result {
 
 ### Talking to Servers With and Without the v2 API
 
-The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it asks only once. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again.
+The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request.
 
 *Note that the v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to let it through. There is no fallback to `POST`.*
 
@@ -633,7 +633,7 @@ let container  = Container::start_default().await.unwrap();
 let client = container.get_client().await.unwrap();
 ```
 
-*Note that starting the container waits up to 60 seconds for EventSourcingDB to answer, which can not be changed, and then fails. If the container exits before, for example because of an invalid configuration, starting it fails at once with an error that names the exit code and the last lines of the output of the container.*
+*Note that starting the container waits until EventSourcingDB answers a ping with status 200. Each container gets 30 seconds for that by default, from creating it until EventSourcingDB answers, and pulling the image does not count. If a container runs, but EventSourcingDB does not answer in time, a new container replaces it, up to 3 containers in total. If the container exits before, for example because of an invalid configuration, or if Docker fails, starting it fails at once, and the error of an exited container names the last 20 lines of its log. Every container whose start fails is removed, unless you tell Testcontainers to keep its containers with `TESTCONTAINERS_COMMAND=keep`.*
 
 #### Configuring the Container Instance
 
@@ -652,6 +652,15 @@ Similarly, you can configure the port to use and the API token. Call the `with_p
 let container = Container::builder()
   .with_port(4000)
   .with_api_token("secret")
+  .start()
+  .await.unwrap();
+```
+
+To give each container more or less time than 30 seconds to start, call the `with_startup_timeout` function:
+
+```rust
+let container = Container::builder()
+  .with_startup_timeout(Duration::from_secs(60))
   .start()
   .await.unwrap();
 ```

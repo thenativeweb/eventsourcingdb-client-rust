@@ -1,4 +1,7 @@
 mod utils;
+use std::time::Duration;
+
+use eventsourcingdb::error::ContainerError;
 use utils::{create_test_container, create_test_container_builder};
 
 #[tokio::test]
@@ -49,7 +52,18 @@ async fn starts_with_a_custom_port() {
 }
 
 #[tokio::test]
-async fn a_container_that_exits_while_starting_fails_with_its_exit_code_and_output() {
+async fn starts_with_a_custom_startup_timeout() {
+    let c = create_test_container_builder()
+        .with_startup_timeout(Duration::from_secs(20))
+        .start()
+        .await
+        .unwrap();
+    let client = c.get_client().await.unwrap();
+    client.ping().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_container_that_exits_while_starting_fails_with_the_end_of_its_log() {
     // EventSourcingDB exits at once without an API token.
     let result = create_test_container_builder()
         .with_api_token("")
@@ -57,13 +71,20 @@ async fn a_container_that_exits_while_starting_fails_with_its_exit_code_and_outp
         .await;
 
     let error = result.expect_err("Expected the container to fail to start");
-    let message = error.to_string();
-    assert!(
-        message.contains("exited with code 1"),
-        "Expected the exit code in the error, but got: {message}"
+    let ContainerError::Exited { log_tail } = &error else {
+        panic!("Expected the container to exit, but got: {error}");
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "failed to start the container, it exited before the database became reachable: {log_tail}"
+        )
     );
+    // EventSourcingDB writes its error to stdout and its usage to stderr, which Docker may interleave either way, so
+    // which of them the last lines show differs.
+    let lines = log_tail.lines().count();
     assert!(
-        message.contains("you must specify an API token"),
-        "Expected the output of the container in the error, but got: {message}"
+        (1..=20).contains(&lines),
+        "Expected up to 20 lines of the log, but got {lines}: {log_tail}"
     );
 }

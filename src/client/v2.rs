@@ -6,6 +6,10 @@
 //! observed events that the server ends without an error. The server reports an error of
 //! the domain as an item of type `error` at status `200`, and an error of the transport with another status and a
 //! plain text.
+//!
+//! A server that answers a path of the v2 API with status `404` or `405` does not offer it, for example since it was
+//! rolled back to a version without it. So the client forgets the v2 API then, and the next request finds out again
+//! which version of the API the server offers.
 
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use reqwest::{Method, StatusCode};
@@ -13,6 +17,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value, value::RawValue};
 
 use super::{
+    api_version::RememberedV2,
     http::{Http, is_from_eventsourcingdb, query, stream_ended_unexpectedly},
     outcome,
 };
@@ -153,34 +158,47 @@ pub fn is_event_envelope(envelope: &Envelope) -> bool {
     envelope.ty == ITEM_TYPE_EVENT
 }
 
-/// Sends the request, and returns the response once its head arrived and it reports success.
+/// Sends the request, and returns the response once its head arrived and it reports success. If its status is `404`
+/// or `405`, the client forgets the v2 API.
 ///
 /// # Errors
 /// Returns a [`DbApiError`] with the status and the text of the response if its status is not `200`, and
 /// [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, but reports success.
 async fn send<T: Serialize + ?Sized>(
     http: &Http,
+    remembered: RememberedV2<'_>,
     method: Method,
     path: &str,
     body: Option<&T>,
 ) -> Result<reqwest::Response, ClientError> {
     let request = http.request(method, path, body)?;
-    send_request(http, request).await
+    send_request(http, remembered, request).await
 }
 
 /// Sends the request that was built already, and checks the response as [`send`] does.
 async fn send_request(
     http: &Http,
+    remembered: RememberedV2<'_>,
     request: reqwest::Request,
 ) -> Result<reqwest::Response, ClientError> {
-    check_response(http, http.send(request).await?).await
+    check_response(http, remembered, http.send(request).await?).await
 }
 
 /// Checks the response as [`send`] does, and returns it if it reports success.
 async fn check_response(
     http: &Http,
+    remembered: RememberedV2<'_>,
     response: reqwest::Response,
 ) -> Result<reqwest::Response, ClientError> {
+    // As in the probe, the status decides before the Server header, so that the 404 of a proxy that only forwards the
+    // v1 API forgets the v2 API as well. The request itself fails as it would otherwise.
+    if matches!(
+        response.status(),
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+    ) {
+        remembered.forget();
+    }
+
     let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
 
     if response.status() == StatusCode::OK {
@@ -196,12 +214,13 @@ async fn check_response(
 /// Sends a request that expects a single answer, and returns its data.
 async fn request_single<T: DeserializeOwned, B: Serialize + ?Sized>(
     http: &Http,
+    remembered: RememberedV2<'_>,
     method: Method,
     path: &str,
     body: Option<&B>,
     item_type: &str,
 ) -> Result<T, ClientError> {
-    let response = send(http, method, path, body).await?;
+    let response = send(http, remembered, method, path, body).await?;
     let envelope: Envelope = http.read_json(response).await?;
     parse_envelope(&envelope, item_type)
 }
@@ -246,18 +265,19 @@ fn request_items<T: DeserializeOwned + Send + 'static>(
 /// Sends a request that expects a stream of items of the given type, and returns the stream.
 async fn request_streaming<T: DeserializeOwned + Send + 'static, B: Serialize + ?Sized>(
     http: &Http,
+    remembered: RememberedV2<'_>,
     path: &str,
     body: Option<&B>,
     item_type: &'static str,
 ) -> Result<BoxStream<'static, Result<T, ClientError>>, ClientError> {
-    let response = send(http, query(), path, body).await?;
+    let response = send(http, remembered, query(), path, body).await?;
     Ok(request_items(http, response, item_type))
 }
 
-pub async fn ping(http: &Http) -> Result<(), ClientError> {
+pub async fn ping(http: &Http, remembered: RememberedV2<'_>) -> Result<(), ClientError> {
     // Pinging needs no API token, so the request sends none.
     let request = http.request_without_api_token(Method::GET, PING_PATH, None::<&()>)?;
-    let response = send_request(http, request).await?;
+    let response = send_request(http, remembered, request).await?;
     let envelope: Envelope = http.read_json(response).await?;
     let event: ManagementEvent = parse_envelope(&envelope, ITEM_TYPE_EVENT)?;
     (event.ty() == "io.eventsourcingdb.api.ping-received")
@@ -265,9 +285,13 @@ pub async fn ping(http: &Http) -> Result<(), ClientError> {
         .ok_or(ClientError::PingFailed)
 }
 
-pub async fn verify_api_token(http: &Http) -> Result<(), ClientError> {
+pub async fn verify_api_token(
+    http: &Http,
+    remembered: RememberedV2<'_>,
+) -> Result<(), ClientError> {
     let event: ManagementEvent = request_single(
         http,
+        remembered,
         Method::POST,
         "/api/v2/system/verify-token",
         None::<&()>,
@@ -281,6 +305,7 @@ pub async fn verify_api_token(http: &Http) -> Result<(), ClientError> {
 
 pub async fn write_events(
     http: &Http,
+    remembered: RememberedV2<'_>,
     events: &[EventCandidate],
     preconditions: &[Precondition],
 ) -> Result<Vec<Event>, ClientError> {
@@ -292,7 +317,7 @@ pub async fn write_events(
     let (sent, hand_over) = http.send_write(&write).await;
 
     let writing = async {
-        let response = check_response(http, sent?).await?;
+        let response = check_response(http, remembered, sent?).await?;
         request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await
@@ -319,6 +344,7 @@ fn is_refusal(error: &DbApiError) -> bool {
 
 pub async fn register_event_schema(
     http: &Http,
+    remembered: RememberedV2<'_>,
     event_type: &str,
     schema: &Value,
 ) -> Result<ManagementEvent, ClientError> {
@@ -330,7 +356,7 @@ pub async fn register_event_schema(
     let (sent, hand_over) = http.send_write(&write).await;
 
     let registering = async {
-        let response = check_response(http, sent?).await?;
+        let response = check_response(http, remembered, sent?).await?;
         let mut events: Vec<ManagementEvent> = request_items(http, response, ITEM_TYPE_EVENT)
             .try_collect()
             .await?;
@@ -347,9 +373,14 @@ pub async fn register_event_schema(
     outcome::of_write(registering.await, &hand_over, is_refusal)
 }
 
-pub async fn read_event_type(http: &Http, event_type: &str) -> Result<EventType, ClientError> {
+pub async fn read_event_type(
+    http: &Http,
+    remembered: RememberedV2<'_>,
+    event_type: &str,
+) -> Result<EventType, ClientError> {
     request_single(
         http,
+        remembered,
         query(),
         "/api/v2/data/read-event-type",
         Some(&ReadEventTypeBody { ty: event_type }),
@@ -360,11 +391,13 @@ pub async fn read_event_type(http: &Http, event_type: &str) -> Result<EventType,
 
 pub async fn read_events(
     http: &Http,
+    remembered: RememberedV2<'_>,
     subject: &str,
     options: Option<ReadEventsOptions<'_>>,
 ) -> Result<BoxStream<'static, Result<Event, ClientError>>, ClientError> {
     request_streaming(
         http,
+        remembered,
         "/api/v2/data/read-events",
         Some(&ReadEventsBody { subject, options }),
         ITEM_TYPE_EVENT,
@@ -374,11 +407,13 @@ pub async fn read_events(
 
 pub async fn observe_events(
     http: &Http,
+    remembered: RememberedV2<'_>,
     subject: &str,
     options: Option<ObserveEventsOptions<'_>>,
 ) -> Result<BoxStream<'static, Result<Event, ClientError>>, ClientError> {
     request_streaming(
         http,
+        remembered,
         "/api/v2/data/observe-events",
         Some(&ObserveEventsBody { subject, options }),
         ITEM_TYPE_EVENT,
@@ -388,10 +423,12 @@ pub async fn observe_events(
 
 pub async fn run_eventql_query(
     http: &Http,
+    remembered: RememberedV2<'_>,
     query_text: &str,
 ) -> Result<BoxStream<'static, Result<Value, ClientError>>, ClientError> {
     let rows = request_streaming::<Row, _>(
         http,
+        remembered,
         "/api/v2/data/run-eventql-query",
         Some(&RunEventqlQueryBody { query: query_text }),
         ITEM_TYPE_ROW,
@@ -402,11 +439,13 @@ pub async fn run_eventql_query(
 
 pub async fn read_subjects(
     http: &Http,
+    remembered: RememberedV2<'_>,
     subject: &str,
     options: ReadSubjectsOptions,
 ) -> Result<BoxStream<'static, Result<String, ClientError>>, ClientError> {
     let subjects = request_streaming::<Subject, _>(
         http,
+        remembered,
         "/api/v2/data/read-subjects",
         Some(&ReadSubjectsBody { subject, options }),
         ITEM_TYPE_SUBJECT,
@@ -417,9 +456,11 @@ pub async fn read_subjects(
 
 pub async fn read_event_types(
     http: &Http,
+    remembered: RememberedV2<'_>,
 ) -> Result<BoxStream<'static, Result<EventType, ClientError>>, ClientError> {
     request_streaming(
         http,
+        remembered,
         "/api/v2/data/read-event-types",
         None::<&()>,
         ITEM_TYPE_EVENT_TYPE,
