@@ -54,7 +54,7 @@ if let Err(err) = result {
 
 ### Talking to Servers With and Without the v2 API
 
-The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request.
+The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request. If it remembers that the server does not offer the v2 API, it asks again before it refuses a write with a recursive precondition, since the server may have been upgraded meanwhile, see [Using Preconditions Recursively](#using-preconditions-recursively). Every other request keeps using the v1 API meanwhile, and the client keeps remembering it if asking fails.
 
 *Note that the v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to let it through. There is no fallback to `POST`.*
 
@@ -112,7 +112,7 @@ match client.write_events(events, preconditions).await {
 
 EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored nonetheless. If writing events or registering an event schema fails in a way that leaves open whether it was stored, the function returns a `ClientError::OutcomeUnknown` error, which wraps the error the write failed with, for example after the connection stalled or broke, or if the server answered with status `500`. Before you repeat such a write, check whether it was stored, for example by reading the events.
 
-A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, also if establishing it stalled, or if the server refused the write, for example since a precondition does not hold.
+A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, also if establishing it stalled, if the server refused the write, for example since a precondition does not hold, or if the client never sent it, for example since it refused it with a `ClientError::IncompatibleServer` error.
 
 #### Aborting a Request
 
@@ -151,14 +151,12 @@ match result {
 
 #### Using the `IsSubjectPristine` precondition
 
-If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `IsSubjectPristine` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `is_subject_pristine` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectPristine {
-    subject: "/books/42".to_string(),
-  }],
+  vec![Precondition::is_subject_pristine("/books/42", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -168,14 +166,12 @@ match result {
 
 #### Using the `IsSubjectPopulated` precondition
 
-If you only want to write events in case a subject (such as `/books/42`) already has at least one event, use the `IsSubjectPopulated` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case a subject (such as `/books/42`) already has at least one event, use the `is_subject_populated` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectPopulated {
-    subject: "/books/42".to_string(),
-  }],
+  vec![Precondition::is_subject_populated("/books/42", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -185,15 +181,12 @@ match result {
 
 #### Using the `IsSubjectOnEventId` precondition
 
-If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `IsSubjectOnEventId` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `is_subject_on_event_id` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectOnEventId {
-    subject: "/books/42".to_string(),
-    event_id: "0".to_string(),
-  }],
+  vec![Precondition::is_subject_on_event_id("/books/42", "0", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -203,16 +196,39 @@ match result {
 
 *Note that according to the CloudEvents standard, event IDs must be of type string.*
 
+#### Using Preconditions Recursively
+
+If you want the `IsSubjectPristine`, `IsSubjectPopulated`, or `IsSubjectOnEventId` precondition to apply not only to a subject (such as `/books/42`), but also to all its nested subjects, pass a `PreconditionOptions` object as the last argument and set the `recursive` option to `true`. Then `IsSubjectPristine` holds if neither the subject nor any of its nested subjects has an event, `IsSubjectPopulated` holds if any of them has one, and `IsSubjectOnEventId` holds if the last event among all of them has the given ID:
+
+```rust
+use eventsourcingdb::PreconditionOptions;
+
+// ...
+
+let result = client.write_events(
+  vec![event.clone()],
+  vec![Precondition::is_subject_on_event_id(
+    "/books/42",
+    "0",
+    Some(PreconditionOptions { recursive: true }),
+  )],
+).await;
+```
+
+A recursive precondition that does not hold is reported like any other precondition that does not hold. With `None`, or with the `recursive` option set to `false`, a precondition applies to the subject alone.
+
+*Note that only the v2 API checks a precondition recursively. If the client remembers from an earlier request that the server does not offer the v2 API, it asks the server again before it writes events with a recursive precondition, and writes them through the v2 API if the server offers it by now. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error before it sends the events, so nothing is written. If asking fails, `write_events` fails with that error, and the client keeps remembering that the server does not offer the v2 API. Every other request keeps using the v1 API while the client asks.*
+
 #### Using the `IsEventQLQueryTrue` precondition
 
-If you want to write events depending on an EventQL query, use the `IsEventQLQueryTrue` precondition to create a precondition and pass it in a vector as the second argument:
+If you want to write events depending on an EventQL query, use the `is_eventql_query_true` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsEventQLQueryTrue {
-    query: "FROM e IN events WHERE e.type == 'io.eventsourcingdb.library.book-borrowed' PROJECT INTO COUNT() < 10".to_string(),
-  }],
+  vec![Precondition::is_eventql_query_true(
+    "FROM e IN events WHERE e.type == 'io.eventsourcingdb.library.book-borrowed' PROJECT INTO COUNT() < 10",
+  )],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -691,6 +707,36 @@ In case you need to set up the client yourself, use the following functions to g
 - `get_mapped_port()` returns the port
 - `get_base_url()` returns the full URL of the container
 - `get_api_token()` returns the API token
+
+## Upgrading From Version 3
+
+Version 4 of the SDK adds options to the preconditions on a subject, see [Using Preconditions Recursively](#using-preconditions-recursively), and creates preconditions with functions, so that a variant of `Precondition` can get a new field without breaking your code. It changes the following:
+
+- The variants of `Precondition` are `#[non_exhaustive]`, so you create a precondition with its function instead of the variant. The functions of the preconditions on a subject take their options as the last argument, which is `None` for a precondition without options:
+
+  ```rust
+  // Before
+  Precondition::IsSubjectPristine { subject: "/books/42".to_string() };
+  Precondition::IsSubjectPopulated { subject: "/books/42".to_string() };
+  Precondition::IsSubjectOnEventId { subject: "/books/42".to_string(), event_id: "0".to_string() };
+  Precondition::IsEventQLQueryTrue { query: query.to_string() };
+
+  // After
+  Precondition::is_subject_pristine("/books/42", None);
+  Precondition::is_subject_populated("/books/42", None);
+  Precondition::is_subject_on_event_id("/books/42", "0", None);
+  Precondition::is_eventql_query_true(query);
+  ```
+
+- For the same reason, a pattern that matches a variant of `Precondition` needs `..`:
+
+  ```rust
+  // Before
+  Precondition::IsSubjectPristine { subject } => // ...
+
+  // After
+  Precondition::IsSubjectPristine { subject, .. } => // ...
+  ```
 
 ## Upgrading From Version 2
 

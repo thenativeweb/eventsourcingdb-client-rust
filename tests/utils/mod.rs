@@ -3,7 +3,7 @@
 
 use chrono::{TimeDelta, Utc};
 use eventsourcingdb::{
-    Event, EventCandidate, TraceInfo,
+    Client, Event, EventCandidate, TraceInfo,
     container::{Container, ContainerBuilder},
 };
 use serde_json::{Value, json};
@@ -23,6 +23,15 @@ pub async fn create_test_container() -> Container {
         .start()
         .await
         .expect("Failed to start test container")
+}
+
+/// Tells whether the server offers the v2 API, which it does if it answers the ping of the v2 API
+pub async fn offers_v2_api(client: &Client) -> bool {
+    reqwest::get(client.get_base_url().join("/api/v2/system/ping").unwrap())
+        .await
+        .expect("Failed to ping through the v2 API")
+        .status()
+        .is_success()
 }
 
 pub fn create_test_eventcandidate(

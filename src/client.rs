@@ -37,7 +37,7 @@ use crate::{
 use api_version::{ApiVersionCell, RememberedApi};
 use futures::Stream;
 use http::Http;
-pub use precondition::Precondition;
+pub use precondition::{Precondition, PreconditionOptions};
 use std::time::Duration;
 use url::Url;
 
@@ -54,7 +54,9 @@ const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example since
 /// the server is not reachable, the first request fails with that error, and the next request asks again. If the
 /// server answers a path of the v2 API with status `404` or `405`, for example after it was rolled back to a version
-/// without it, the client asks again on the next request.
+/// without it, the client asks again on the next request. If it remembers that the server does not offer the v2 API,
+/// it asks again before it refuses a write with a recursive precondition, see [`PreconditionOptions`]. Every other
+/// request keeps using the v1 API meanwhile, and the client keeps remembering it if asking fails.
 ///
 /// The v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of the server has to let it
 /// through.
@@ -535,12 +537,28 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
+    /// A recursive precondition, see [`PreconditionOptions`], needs a server that offers the v2 API. If the client
+    /// remembers from an earlier request that the server does not offer it, it asks the server again, since the server
+    /// may have been upgraded meanwhile. If the server does not offer the v2 API, the function returns
+    /// [`ClientError::IncompatibleServer`] before it sends the events. If asking fails, the function returns that
+    /// error, and the client keeps remembering that the server does not offer the v2 API.
     pub async fn write_events(
         &self,
         events: Vec<EventCandidate>,
         preconditions: Vec<Precondition>,
     ) -> Result<Vec<Event>, ClientError> {
-        match self.api_version().await? {
+        // Only the v2 API checks a recursive precondition. So a client that remembers that the server does not offer
+        // it finds out again before it refuses the write, since the server may offer it by now, for example after an
+        // upgrade.
+        let remembered = if preconditions.iter().any(Precondition::is_recursive) {
+            self.api_version
+                .get_or_probe_again_if_v1(&self.http)
+                .await?
+        } else {
+            self.api_version().await?
+        };
+
+        match remembered {
             RememberedApi::V1 => v1::write_events(&self.http, events, preconditions).await,
             RememberedApi::V2(remembered) => {
                 v2::write_events(&self.http, remembered, &events, &preconditions).await

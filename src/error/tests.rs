@@ -90,3 +90,14 @@ fn the_sources_of_a_client_error_contain_the_errors_it_wraps() {
     assert!(find_source::<ClientError>(&error).is_some());
     assert!(find_source::<io::Error>(&error).is_some());
 }
+
+#[test]
+fn an_incompatible_server_tells_that_a_recursive_precondition_needs_the_v2_api() {
+    let error = ClientError::IncompatibleServer;
+
+    assert_eq!(
+        error.to_string(),
+        "The server does not offer the v2 API, which a recursive precondition needs"
+    );
+    assert!(error.source().is_none());
+}
