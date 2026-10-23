@@ -391,7 +391,7 @@ pub async fn verify_api_token(http: &Http) -> Result<(), ClientError> {
 /// Writes the events through the v1 API.
 ///
 /// # Errors
-/// Returns [`ClientError::IncompatibleServer`] for a recursive precondition before anything is sent, see
+/// Returns [`ClientError::IncompatibleServer`] for a recursive precondition before the events are sent, see
 /// [`V1Precondition`].
 pub async fn write_events(
     http: &Http,

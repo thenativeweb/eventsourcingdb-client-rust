@@ -9,7 +9,7 @@ pub struct PreconditionOptions {
     /// which is the default
     ///
     /// Only the v2 API checks a precondition recursively, so if the server does not offer it, writing the events fails
-    /// with [`ClientError::IncompatibleServer`](crate::error::ClientError::IncompatibleServer) before anything is
+    /// with [`ClientError::IncompatibleServer`](crate::error::ClientError::IncompatibleServer) before the events are
     /// sent.
     pub recursive: bool,
 }
@@ -17,7 +17,7 @@ pub struct PreconditionOptions {
 /// Enum for different preconditions that can be used when writing events
 ///
 /// Create a precondition with its function, such as [`Precondition::is_subject_pristine`]. The variants are
-/// `#[non_exhaustive]`, so that a new option does not break the code that creates or matches them.
+/// `#[non_exhaustive]`, so that a new field does not break the code that creates or matches them.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum Precondition {

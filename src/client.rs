@@ -536,7 +536,7 @@ impl Client {
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
     /// If a precondition is recursive, see [`PreconditionOptions`], and the server does not offer the v2 API, it returns
-    /// [`ClientError::IncompatibleServer`] before it sends anything.
+    /// [`ClientError::IncompatibleServer`] before it sends the events.
     pub async fn write_events(
         &self,
         events: Vec<EventCandidate>,

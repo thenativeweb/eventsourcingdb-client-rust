@@ -217,7 +217,7 @@ let result = client.write_events(
 
 A recursive precondition that does not hold is reported like any other precondition that does not hold. With `None`, or with the `recursive` option set to `false`, a precondition applies to the subject alone.
 
-*Note that only the v2 API checks a precondition recursively. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error for a recursive precondition before it sends anything, so nothing is written.*
+*Note that only the v2 API checks a precondition recursively. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error for a recursive precondition before it sends the events, so nothing is written.*
 
 #### Using the `IsEventQLQueryTrue` precondition
 
@@ -710,7 +710,7 @@ In case you need to set up the client yourself, use the following functions to g
 
 ## Upgrading From Version 3
 
-Version 4 of the SDK creates preconditions with functions, so that a precondition can get a new option, such as `recursive`, without breaking your code, see [Using Preconditions Recursively](#using-preconditions-recursively). It changes the following:
+Version 4 of the SDK adds options to the preconditions on a subject, see [Using Preconditions Recursively](#using-preconditions-recursively), and creates preconditions with functions, so that a variant of `Precondition` can get a new field without breaking your code. It changes the following:
 
 - The variants of `Precondition` are `#[non_exhaustive]`, so you create a precondition with its function instead of the variant. The functions of the preconditions on a subject take their options as the last argument, which is `None` for a precondition without options:
 
