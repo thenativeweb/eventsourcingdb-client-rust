@@ -131,4 +131,16 @@ impl Precondition {
             query: query.into(),
         }
     }
+
+    /// Tells whether the precondition applies to the subjects below its subject as well, which only the v2 API checks.
+    pub(crate) fn is_recursive(&self) -> bool {
+        match self {
+            Self::IsSubjectPristine { options, .. }
+            | Self::IsSubjectPopulated { options, .. }
+            | Self::IsSubjectOnEventId { options, .. } => {
+                options.as_ref().is_some_and(|options| options.recursive)
+            }
+            Self::IsEventQLQueryTrue { .. } => false,
+        }
+    }
 }

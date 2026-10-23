@@ -54,7 +54,7 @@ if let Err(err) = result {
 
 ### Talking to Servers With and Without the v2 API
 
-The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request.
+The client works with servers that offer the v2 API, and with servers that do not. On its first request, it asks the server whether it offers the v2 API, and then sends every request through the v2 API if so, and through the v1 API if not. It remembers the answer, so it does not ask on every request. If asking fails, for example because the server is not reachable, the first request fails with that error, and the next request asks again. If the server answers a path of the v2 API with 404 or 405, for example after it was rolled back to a version without it, the client asks again on the next request. If it remembers that the server does not offer the v2 API, it asks again before it refuses a write with a recursive precondition, since the server may have been upgraded meanwhile, see [Using Preconditions Recursively](#using-preconditions-recursively).
 
 *Note that the v2 API reads with the HTTP method `QUERY` (RFC 10008), so a proxy in front of EventSourcingDB has to let it through. There is no fallback to `POST`.*
 
@@ -112,7 +112,7 @@ match client.write_events(events, preconditions).await {
 
 EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored nonetheless. If writing events or registering an event schema fails in a way that leaves open whether it was stored, the function returns a `ClientError::OutcomeUnknown` error, which wraps the error the write failed with, for example after the connection stalled or broke, or if the server answered with status `500`. Before you repeat such a write, check whether it was stored, for example by reading the events.
 
-A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, also if establishing it stalled, or if the server refused the write, for example since a precondition does not hold.
+A write fails with its error itself only if it was certainly not stored: if the connection could not be established at all, also if establishing it stalled, if the server refused the write, for example since a precondition does not hold, or if the client never sent it, for example since it refused it with a `ClientError::IncompatibleServer` error.
 
 #### Aborting a Request
 
@@ -220,7 +220,7 @@ let result = client.write_events(
 
 A recursive precondition that does not hold is reported like any other precondition that does not hold. With `None`, or with the `recursive` option set to `false`, a precondition applies to the subject alone.
 
-*Note that only the v2 API checks a precondition recursively. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error for a recursive precondition before it sends the events, so nothing is written.*
+*Note that only the v2 API checks a precondition recursively. If the client remembers from an earlier request that the server does not offer the v2 API, it asks the server again before it writes events with a recursive precondition, and writes them through the v2 API if the server offers it by now. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error before it sends the events, so nothing is written. If asking fails, `write_events` fails with that error, as the first request of a client does.*
 
 #### Using the `IsEventQLQueryTrue` precondition
 

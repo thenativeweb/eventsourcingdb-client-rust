@@ -1,9 +1,10 @@
 //! This is a purely internal module that decides whether a write that failed may have been stored nonetheless.
 //!
-//! EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored. A write is
-//! certainly not stored only if the connection could not be established at all, or if the server refused it before
-//! storing anything. Every other failure leaves the outcome unknown, so it is wrapped in
-//! [`ClientError::OutcomeUnknown`].
+//! EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored. A write that
+//! the client sends is certainly not stored only if the connection could not be established at all, or if the server
+//! refused it before storing anything. Every other failure leaves the outcome unknown, so it is wrapped in
+//! [`ClientError::OutcomeUnknown`]. A write that the client refuses before sending it, such as one with a recursive
+//! precondition for a server without the v2 API, fails before it gets here, so it is certainly not stored either.
 
 use super::http::HandOver;
 use crate::error::{ClientError, DbApiError};

@@ -1,6 +1,6 @@
 use super::{ClientRequest, OneShotRequest};
 use crate::{
-    client::{Precondition, PreconditionOptions},
+    client::Precondition,
     error::ClientError,
     event::{Event, EventCandidate},
 };
@@ -44,18 +44,11 @@ impl TryFrom<Precondition> for V1Precondition {
     /// Returns [`ClientError::IncompatibleServer`] for a recursive precondition, since the v1 API can only check the
     /// subject alone, which would check less than was asked.
     fn try_from(precondition: Precondition) -> Result<Self, Self::Error> {
-        let is_recursive = |options: &Option<PreconditionOptions>| {
-            options.as_ref().is_some_and(|options| options.recursive)
-        };
+        if precondition.is_recursive() {
+            return Err(ClientError::IncompatibleServer);
+        }
 
         match precondition {
-            Precondition::IsSubjectPristine { options, .. }
-            | Precondition::IsSubjectPopulated { options, .. }
-            | Precondition::IsSubjectOnEventId { options, .. }
-                if is_recursive(&options) =>
-            {
-                Err(ClientError::IncompatibleServer)
-            }
             Precondition::IsSubjectPristine { subject, .. } => {
                 Ok(Self::IsSubjectPristine { subject })
             }

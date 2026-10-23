@@ -154,6 +154,28 @@ impl ApiVersionCell {
         result.map(|api_version| self.remembered(api_version, number))
     }
 
+    /// Returns the version of the API that the server offers as [`ApiVersionCell::get_or_probe`] does, but finds it
+    /// out again if the client remembers the v1 API from a probe that ended before.
+    ///
+    /// A request that comes while a probe runs waits for it instead, as it does in
+    /// [`ApiVersionCell::get_or_probe`], so that concurrent requests share one probe. If the probe fails, the client
+    /// remembers no version, as after every probe that failed.
+    ///
+    /// # Errors
+    /// Returns the error that the probe failed with.
+    pub async fn get_or_probe_again_if_v1(
+        &self,
+        http: &Http,
+    ) -> Result<RememberedApi<'_>, ClientError> {
+        {
+            let mut memory = self.lock();
+            if matches!(memory.state, State::Known(ApiVersion::V1, _)) {
+                memory.state = State::Unknown;
+            }
+        }
+        self.get_or_probe(http).await
+    }
+
     /// The version of the API, as the probe with the given number found it out
     fn remembered(&self, api_version: ApiVersion, probe: u64) -> RememberedApi<'_> {
         match api_version {

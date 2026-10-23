@@ -1,13 +1,14 @@
-//! The tests of finding out again which version of the API the server offers, once it answers a path of the v2 API
-//! with status `404` or `405`, for example after it was rolled back to a version without the v2 API.
+//! The tests of finding out again which version of the API the server offers: once it answers a path of the v2 API
+//! with status `404` or `405`, for example after it was rolled back to a version without the v2 API, and before the
+//! client refuses a recursive precondition since it remembers the v1 API, for example after the server was upgraded.
 
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use futures::{Stream, TryStreamExt, poll};
-use serde_json::json;
+use futures::{Stream, TryStreamExt, future::join_all, poll};
+use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle, time::timeout};
 
 use super::{
@@ -15,7 +16,9 @@ use super::{
     probe_reply, test_candidate,
 };
 use crate::{
+    Precondition, PreconditionOptions,
     error::{ClientError, code},
+    event::Event,
     request_options::ReadSubjectsOptions,
 };
 
@@ -541,5 +544,139 @@ async fn a_404_that_arrives_late_keeps_the_api_that_a_newer_probe_found() {
         paths(&mut server),
         [V2_VERIFY],
         "Expected the late 404 to keep the API that the newer probe found"
+    );
+}
+
+const V2_WRITE: &str = "/api/v2/data/write-events";
+
+/// How the v2 API answers a write of one event
+fn v2_write_reply() -> Reply {
+    let mut lines = vec![Api::V2.event(0)];
+    lines.extend(Api::V2.end());
+    Reply::lines(&lines)
+}
+
+/// Starts a server that offers only the v1 API until the returned flag is set, and the v2 API from then on, as a
+/// server does that is upgraded, and that answers a write through the v2 API with the event it wrote. Every probe
+/// after the upgrade waits for the given gate, if there is one.
+async fn start_server_to_upgrade(
+    gate: Option<watch::Receiver<bool>>,
+) -> (TestServer, Arc<AtomicBool>) {
+    let is_upgraded = Arc::new(AtomicBool::new(false));
+    let server = start_server({
+        let is_upgraded = is_upgraded.clone();
+        move |request: &Request| {
+            if !is_v2(request) {
+                None
+            } else if !is_upgraded.load(Ordering::SeqCst) {
+                Some(not_found())
+            } else if is_probe(request) {
+                gate.clone()
+                    .map(|gate| Reply::Gated(gate, Box::new(probe_reply(Api::V2))))
+            } else if request.path == V2_WRITE {
+                Some(v2_write_reply())
+            } else {
+                None
+            }
+        }
+    })
+    .await;
+    (server, is_upgraded)
+}
+
+/// Writes an event with a recursive precondition.
+async fn write_recursively(client: &Client) -> Result<Vec<Event>, ClientError> {
+    let writing = client.write_events(
+        vec![test_candidate()],
+        vec![Precondition::is_subject_pristine(
+            "/test",
+            Some(PreconditionOptions { recursive: true }),
+        )],
+    );
+    timeout(GUARD_TIMEOUT, writing)
+        .await
+        .expect("The write did not end")
+}
+
+#[tokio::test]
+async fn a_recursive_precondition_finds_out_again_and_is_written_through_the_v2_api_once_the_server_offers_it()
+ {
+    let (mut server, is_upgraded) = start_server_to_upgrade(None).await;
+    let client = create_client(&server);
+    verify_api_token(&client).await;
+    is_upgraded.store(true, Ordering::SeqCst);
+
+    let written = write_recursively(&client)
+        .await
+        .expect("Failed to write events");
+    assert_eq!(written.len(), 1);
+
+    // A later request keeps the v2 API.
+    verify_api_token(&client).await;
+    let requests = server.received();
+    let paths: Vec<_> = requests
+        .iter()
+        .map(|request| request.path.as_str())
+        .collect();
+    assert_eq!(paths, [PROBE, V1_VERIFY, PROBE, V2_WRITE, V2_VERIFY]);
+    let body: Value = serde_json::from_str(&requests[3].body).expect("The body is no JSON");
+    assert_eq!(
+        body["preconditions"][0]["payload"]["options"],
+        json!({ "recursive": true })
+    );
+}
+
+#[tokio::test]
+async fn a_recursive_precondition_finds_out_again_and_fails_if_the_server_still_offers_only_the_v1_api()
+ {
+    let (mut server, _) = start_server_to_upgrade(None).await;
+    let client = create_client(&server);
+    verify_api_token(&client).await;
+
+    let result = write_recursively(&client).await;
+    assert!(
+        matches!(result, Err(ClientError::IncompatibleServer)),
+        "Expected an incompatible server, but got {result:?}"
+    );
+
+    // A later request keeps the v1 API, which the probe found out again.
+    verify_api_token(&client).await;
+    assert_eq!(
+        paths(&mut server),
+        [PROBE, V1_VERIFY, PROBE, V1_VERIFY],
+        "Expected the write to find out the API again, and not to be sent"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_recursive_writes_find_out_again_with_one_probe_and_are_each_sent_once() {
+    let (open_gate, gate) = watch::channel(false);
+    let (mut server, is_upgraded) = start_server_to_upgrade(Some(gate)).await;
+    let client = Arc::new(create_client(&server));
+    verify_api_token(&client).await;
+    let _ = server.received();
+    is_upgraded.store(true, Ordering::SeqCst);
+
+    let writes = tokio::spawn({
+        let client = client.clone();
+        async move { join_all((0..3).map(|_| write_recursively(&client))).await }
+    });
+
+    // The probe is held back until every write waits for it.
+    let first = server.next_request().await;
+    assert!(is_probe(&first), "Expected the probe, but got {first:?}");
+    open_gate.send(true).expect("Failed to open the gate");
+
+    let results = timeout(GUARD_TIMEOUT, writes)
+        .await
+        .expect("The writes did not end")
+        .expect("The writes panicked");
+    for result in results {
+        let _ = result.expect("Failed to write events");
+    }
+    assert_eq!(
+        paths(&mut server),
+        [V2_WRITE, V2_WRITE, V2_WRITE],
+        "Expected one probe for all writes, and each write to be sent once"
     );
 }

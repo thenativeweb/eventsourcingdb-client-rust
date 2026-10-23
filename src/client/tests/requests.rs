@@ -277,7 +277,15 @@ async fn a_recursive_precondition_fails_through_the_v1_api_without_sending_the_w
 
     for preconditions in cases {
         let case = format!("{preconditions:?}");
-        let mut server = start_server(Api::V1, v1_write_reply()).await;
+        // The server answers every probe as one without the v2 API, so that a second probe shows in the requests.
+        let mut server = TestServer::start(|request: &Request| {
+            if is_probe(request) {
+                probe_reply(Api::V1)
+            } else {
+                v1_write_reply()
+            }
+        })
+        .await;
         let client = create_client(&server);
 
         let result = client
@@ -288,11 +296,12 @@ async fn a_recursive_precondition_fails_through_the_v1_api_without_sending_the_w
             "Expected an incompatible server for {case}, but got {result:?}"
         );
 
+        // The first request of the client has just found out the API, so the write does not find it out again.
         skip_probe(&mut server).await;
         let requests = server.received();
         assert!(
             requests.is_empty(),
-            "Expected the write not to be sent for {case}, but got {requests:?}"
+            "Expected neither a second probe nor the write for {case}, but got {requests:?}"
         );
     }
 }

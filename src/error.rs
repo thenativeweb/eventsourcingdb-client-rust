@@ -54,9 +54,13 @@ pub enum ClientError {
     /// EventSourcingDB never stores a write halfway, but a write whose answer is lost may have been stored, for
     /// example after [`ClientError::ConnectionStalled`], a connection that broke after it was established, a stream
     /// that ended before its end item, or an answer with status `500`. A write fails with its error itself only if it
-    /// was certainly not stored: if the connection could not be established at all, or if the DB refused the write.
+    /// was certainly not stored: if the connection could not be established at all, if the DB refused the write, or if
+    /// the client never sent it, for example since it refused it with [`ClientError::IncompatibleServer`].
     OutcomeUnknown(Box<ClientError>),
     /// The server does not offer the v2 API, which a recursive precondition needs, so the write was not sent
+    ///
+    /// The client finds this out for the write itself: if it only remembers it from an earlier request, it asks the
+    /// server again before it refuses the write, since the server may have been upgraded meanwhile.
     IncompatibleServer,
 }
 
