@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "eventsourcingdb"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "bytes",
  "chrono",
