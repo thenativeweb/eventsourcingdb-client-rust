@@ -18,14 +18,14 @@ use testcontainers::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::Notify,
     time::{Instant, sleep, timeout},
 };
 
 use super::{
-    CREATE_GRACE_PERIOD, ContainerBuilder, DEFAULT_STARTUP_TIMEOUT, Docker, Inspect, START_LABEL,
-    Waiting, wait_until_reachable,
+    CREATE_GRACE_PERIOD, ContainerBuilder, DEFAULT_STARTUP_TIMEOUT, Docker, Inspect, PING_TIMEOUT,
+    POLL_INTERVAL, START_LABEL, Waiting, wait_until_reachable,
 };
 use crate::{error::ContainerError, event::EventCandidate};
 
@@ -350,27 +350,105 @@ fn containers_are_kept_only_if_testcontainers_is_told_to_keep_them() {
     assert!(!keeps_containers(None));
 }
 
-/// Answers every request with the given status line, and returns its address and how many requests it answered.
-async fn answering(status_line: &'static str) -> (String, Arc<AtomicUsize>) {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("Failed to start a test server");
-    let address = listener
-        .local_addr()
-        .expect("Failed to get the address of the test server")
-        .to_string();
-    let requests = Arc::new(AtomicUsize::new(0));
-    let answered = Arc::clone(&requests);
-    drop(tokio::spawn(async move {
-        while let Ok((mut socket, _)) = listener.accept().await {
-            let _requests = answered.fetch_add(1, Ordering::SeqCst);
-            let mut buffer = [0; 1024];
-            let _read = socket.read(&mut buffer).await;
+/// How the test server answers a request
+#[derive(Clone, Copy)]
+enum Answer {
+    /// It answers with the given status line.
+    Status(&'static str),
+    /// It reads the request, but never answers it, so that the request runs into its timeout.
+    Never,
+}
+
+const OK: Answer = Answer::Status("HTTP/1.1 200 OK");
+const NO_CONTENT: Answer = Answer::Status("HTTP/1.1 204 No Content");
+const NOT_FOUND: Answer = Answer::Status("HTTP/1.1 404 Not Found");
+const SERVICE_UNAVAILABLE: Answer = Answer::Status("HTTP/1.1 503 Service Unavailable");
+
+/// The request line of the ping of the v2 API, without the version of HTTP
+const V2_PING: &str = "GET /api/v2/system/ping";
+/// The request line of the ping of the v1 API, without the version of HTTP
+const V1_PING: &str = "GET /api/v1/ping";
+
+/// A test server that answers the ping of the v2 API and the ping of the v1 API as it is told, and every other request
+/// with 404, and records each request it gets
+struct TestServer {
+    address: String,
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+impl TestServer {
+    /// Starts a test server that answers the ping of the v2 API and the ping of the v1 API with the given answers.
+    async fn start(v2_ping: Answer, v1_ping: Answer) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to start a test server");
+        let address = listener
+            .local_addr()
+            .expect("Failed to get the address of the test server")
+            .to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&requests);
+        drop(tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                // Each connection is answered in a task of its own, so that a request that is never answered does not
+                // hold up the ones after it.
+                drop(tokio::spawn(answer(
+                    socket,
+                    v2_ping,
+                    v1_ping,
+                    Arc::clone(&recorded),
+                )));
+            }
+        }));
+        Self { address, requests }
+    }
+
+    /// Returns the request line of each request that the server got, without the version of HTTP, in the order in
+    /// which it got them.
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().expect("The lock is poisoned").clone()
+    }
+}
+
+/// Reads a request from the socket, records its request line, and answers it as the test server is told.
+async fn answer(
+    mut socket: TcpStream,
+    v2_ping: Answer,
+    v1_ping: Answer,
+    requests: Arc<Mutex<Vec<String>>>,
+) {
+    let mut request = Vec::new();
+    let mut buffer = [0; 1024];
+    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        match socket.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(read) => request.extend_from_slice(&buffer[..read]),
+        }
+    }
+    let request = String::from_utf8_lossy(&request);
+    let mut request_line = request.split(' ');
+    let method = request_line.next().unwrap_or_default();
+    let path = request_line.next().unwrap_or_default();
+    let answer = match path {
+        "/api/v2/system/ping" => v2_ping,
+        "/api/v1/ping" => v1_ping,
+        _ => NOT_FOUND,
+    };
+    requests
+        .lock()
+        .expect("The lock is poisoned")
+        .push(format!("{method} {path}"));
+
+    match answer {
+        Answer::Status(status_line) => {
             let answer = format!("{status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             let _written = socket.write_all(answer.as_bytes()).await;
         }
-    }));
-    (address, requests)
+        Answer::Never => {
+            // The connection stays open until the client gives up on it.
+            while matches!(socket.read(&mut buffer).await, Ok(read) if read > 0) {}
+        }
+    }
 }
 
 /// A container whose port Docker publishes only on the third lookup, at first on a stale port, on which something
@@ -398,11 +476,11 @@ impl Inspect for LatePort {
 
 #[tokio::test]
 async fn waiting_reads_the_port_anew_for_each_ping_and_accepts_only_status_200() {
-    let (stale, stale_requests) = answering("HTTP/1.1 204 No Content").await;
-    let (database, database_requests) = answering("HTTP/1.1 200 OK").await;
+    let stale = TestServer::start(NO_CONTENT, NO_CONTENT).await;
+    let database = TestServer::start(OK, OK).await;
     let container = LatePort {
-        stale,
-        database,
+        stale: stale.address.clone(),
+        database: database.address.clone(),
         lookups: AtomicUsize::new(0),
     };
 
@@ -410,8 +488,8 @@ async fn waiting_reads_the_port_anew_for_each_ping_and_accepts_only_status_200()
 
     waited.expect("Expected the database to become reachable");
     assert_eq!(container.lookups.load(Ordering::SeqCst), 6);
-    assert_eq!(stale_requests.load(Ordering::SeqCst), 3);
-    assert_eq!(database_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(stale.requests().len(), 3);
+    assert_eq!(database.requests().len(), 1);
 }
 
 /// A container that runs, whose port Docker never publishes, unless Docker fails or the container exited, as the
@@ -494,6 +572,139 @@ async fn waiting_ends_at_once_if_docker_fails_to_inspect_the_container() {
         );
         assert!(started_at.elapsed() < Duration::from_secs(30));
     }
+}
+
+/// A container that runs, whose port Docker published at the given address
+struct Published(String);
+
+impl Inspect for Published {
+    fn address(&self) -> impl Future<Output = Result<Option<String>, TestcontainersError>> {
+        ready(Ok(Some(self.0.clone())))
+    }
+
+    fn exit_code(&self) -> impl Future<Output = Result<Option<i64>, TestcontainersError>> {
+        ready(Ok(None))
+    }
+}
+
+#[tokio::test]
+async fn waiting_asks_the_ping_of_the_v1_api_if_the_server_answers_the_ping_of_the_v2_api_with_404_or_405()
+ {
+    // A server without the v2 API answers its ping with 404, or with 405.
+    for v2_ping in [NOT_FOUND, Answer::Status("HTTP/1.1 405 Method Not Allowed")] {
+        let server = TestServer::start(v2_ping, OK).await;
+
+        let waited = wait_until_reachable(
+            &Published(server.address.clone()),
+            Instant::now() + Duration::from_secs(10),
+        )
+        .await;
+
+        waited.expect("Expected the database to become reachable");
+        assert_eq!(server.requests(), [V2_PING, V1_PING]);
+    }
+}
+
+#[tokio::test]
+async fn waiting_does_not_ask_the_ping_of_the_v1_api_if_the_server_answers_the_ping_of_the_v2_api_with_200()
+ {
+    let server = TestServer::start(OK, OK).await;
+
+    let waited = wait_until_reachable(
+        &Published(server.address.clone()),
+        Instant::now() + Duration::from_secs(10),
+    )
+    .await;
+
+    waited.expect("Expected the database to become reachable");
+    assert_eq!(server.requests(), [V2_PING]);
+}
+
+#[tokio::test]
+async fn waiting_accepts_a_server_without_the_v1_api_that_answers_the_ping_of_the_v2_api_with_200()
+{
+    let server = TestServer::start(OK, NOT_FOUND).await;
+
+    let waited = wait_until_reachable(
+        &Published(server.address.clone()),
+        Instant::now() + Duration::from_secs(10),
+    )
+    .await;
+
+    waited.expect("Expected the database to become reachable");
+    assert_eq!(server.requests(), [V2_PING]);
+}
+
+#[tokio::test]
+async fn waiting_tries_again_without_asking_the_ping_of_the_v1_api_if_the_server_answers_the_ping_of_the_v2_api_with_another_status()
+ {
+    let server = TestServer::start(SERVICE_UNAVAILABLE, OK).await;
+
+    let waited = wait_until_reachable(
+        &Published(server.address.clone()),
+        Instant::now() + POLL_INTERVAL * 10,
+    )
+    .await;
+
+    assert!(
+        matches!(waited, Err(Waiting::Unreachable)),
+        "Expected the database not to become reachable, but got: {waited:?}"
+    );
+    let requests = server.requests();
+    assert!(
+        requests.len() > 1 && requests.iter().all(|request| request == V2_PING),
+        "Expected only pings of the v2 API, and more than one, but got: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn waiting_tries_again_without_asking_the_ping_of_the_v1_api_if_the_ping_of_the_v2_api_runs_into_its_timeout()
+ {
+    let server = TestServer::start(Answer::Never, OK).await;
+
+    let waited = wait_until_reachable(
+        &Published(server.address.clone()),
+        Instant::now() + PING_TIMEOUT * 3,
+    )
+    .await;
+
+    assert!(
+        matches!(waited, Err(Waiting::Unreachable)),
+        "Expected the database not to become reachable, but got: {waited:?}"
+    );
+    // A second ping shows that the first one ran into its timeout before the deadline.
+    let requests = server.requests();
+    assert!(
+        requests.len() > 1 && requests.iter().all(|request| request == V2_PING),
+        "Expected only pings of the v2 API, and more than one, but got: {requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn waiting_starts_each_attempt_with_the_ping_of_the_v2_api() {
+    // The ping of the v1 API answers with a status of success other than 200, which does not count either, so that
+    // each attempt asks both.
+    let server = TestServer::start(NOT_FOUND, NO_CONTENT).await;
+
+    let waited = wait_until_reachable(
+        &Published(server.address.clone()),
+        Instant::now() + POLL_INTERVAL * 10,
+    )
+    .await;
+
+    assert!(
+        matches!(waited, Err(Waiting::Unreachable)),
+        "Expected the database not to become reachable, but got: {waited:?}"
+    );
+    let requests = server.requests();
+    assert!(
+        requests.len() > 3
+            && requests
+                .iter()
+                .enumerate()
+                .all(|(index, request)| request == if index % 2 == 0 { V2_PING } else { V1_PING }),
+        "Expected the pings of the v2 API and of the v1 API to take turns, but got: {requests:?}"
+    );
 }
 
 #[tokio::test]

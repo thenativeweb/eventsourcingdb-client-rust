@@ -22,11 +22,9 @@ async fn get_base_url() {
 #[tokio::test]
 async fn db_is_reachable() {
     let c = create_test_container().await;
-    let base_url = c.get_base_url().await.unwrap();
-    let ping_url = base_url
-        .join("/api/v1/ping")
-        .expect("Failed to join ping endpoint");
-    reqwest::Client::new().get(ping_url).send().await.unwrap();
+    // The client pings the database on its own, so that this does not depend on how the container waits for it.
+    let client = c.get_client().await.unwrap();
+    client.ping().await.unwrap();
 }
 
 #[tokio::test]

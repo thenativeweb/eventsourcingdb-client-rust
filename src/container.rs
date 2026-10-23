@@ -71,7 +71,10 @@ use tokio::{
 };
 use url::{Host, Url};
 
-use crate::{client::Client, error::ContainerError};
+use crate::{
+    client::{Client, v2},
+    error::ContainerError,
+};
 
 /// How long each container may take by default, from creating it until EventSourcingDB in it answers a ping
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -668,7 +671,7 @@ impl From<TestcontainersError> for Waiting {
 ///
 /// It ends at once if the container exits, or if Docker fails. Docker may publish the port of the container only a
 /// while after it started the container, especially when it is busy, so looking up the port is repeated for each
-/// ping.
+/// attempt to ping.
 async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Result<(), Waiting> {
     let client = reqwest::Client::builder()
         .timeout(PING_TIMEOUT)
@@ -680,15 +683,10 @@ async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Re
             if container.exit_code().await?.is_some() {
                 return Err(Waiting::Exited);
             }
-            if let Some(address) = container.address().await? {
-                let is_reachable = client
-                    .get(format!("http://{address}/api/v1/ping"))
-                    .send()
-                    .await
-                    .is_ok_and(|response| response.status() == StatusCode::OK);
-                if is_reachable {
-                    return Ok(());
-                }
+            if let Some(address) = container.address().await?
+                && answers_ping(&client, &address).await
+            {
+                return Ok(());
             }
             sleep(POLL_INTERVAL).await;
         }
@@ -696,6 +694,32 @@ async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Re
     timeout_at(deadline, waiting)
         .await
         .unwrap_or(Err(Waiting::Unreachable))
+}
+
+/// Tells whether EventSourcingDB at the given address answers a ping with status 200.
+///
+/// It asks the ping of the v2 API, and the ping of the v1 API only if the server answers that as a server without the
+/// v2 API does, see [`v2::is_not_offered`], so that a server with either API counts as reachable. Any other answer,
+/// and a request that fails or runs into its timeout, means that EventSourcingDB is not ready yet, so it does not lead
+/// to the ping of the v1 API. Nothing is remembered from one call to the next: waiting ends with the first ping that
+/// is answered with 200, so remembering would only spare a ping of the v2 API in attempts that fail anyway.
+async fn answers_ping(client: &reqwest::Client, address: &str) -> bool {
+    let Ok(response) = client
+        .get(format!("http://{address}{}", v2::PING_PATH))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    match response.status() {
+        StatusCode::OK => true,
+        status if v2::is_not_offered(status) => client
+            .get(format!("http://{address}/api/v1/ping"))
+            .send()
+            .await
+            .is_ok_and(|response| response.status() == StatusCode::OK),
+        _ => false,
+    }
 }
 
 /// Returns the last lines of the log of a container, with stdout and stderr in the order in which the container

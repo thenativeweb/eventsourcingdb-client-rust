@@ -35,6 +35,15 @@ use crate::{
 /// The path of the route that pings the server, which tells whether the server offers the v2 API
 pub const PING_PATH: &str = "/api/v2/system/ping";
 
+/// Tells whether a server that answers a path of the v2 API with the given status does not offer the v2 API, which is
+/// the case for status `404` or `405`.
+pub fn is_not_offered(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+    )
+}
+
 const ITEM_TYPE_EVENT: &str = "event";
 const ITEM_TYPE_EVENT_TYPE: &str = "eventType";
 const ITEM_TYPE_SUBJECT: &str = "subject";
@@ -192,10 +201,7 @@ async fn check_response(
 ) -> Result<reqwest::Response, ClientError> {
     // As in the probe, the status decides before the Server header, so that the 404 of a proxy that only forwards the
     // v1 API forgets the v2 API as well. The request itself fails as it would otherwise.
-    if matches!(
-        response.status(),
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-    ) {
+    if is_not_offered(response.status()) {
         remembered.forget();
     }
 
