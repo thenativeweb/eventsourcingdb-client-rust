@@ -49,7 +49,6 @@ rand = { version = "0.10", optional = true }
 polars = { version = "0.55", default-features = false, features = ["lazy", "dtype-datetime"], optional = true }
 
 [dev-dependencies]
-testcontainers = "0.28.0"
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-test = "0.4.5"
 
