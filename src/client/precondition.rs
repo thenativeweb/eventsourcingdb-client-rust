@@ -8,10 +8,7 @@ use serde::Serialize;
 ///
 /// let precondition = Precondition::is_subject_pristine(
 ///     "/orders/42",
-///     Some(PreconditionOptions {
-///         recursive: true,
-///         ..Default::default()
-///     }),
+///     Some(PreconditionOptions { recursive: true }),
 /// );
 /// ```
 #[derive(Debug, Default, Clone, Serialize)]

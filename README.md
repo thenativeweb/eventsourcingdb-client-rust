@@ -210,10 +210,7 @@ let result = client.write_events(
   vec![Precondition::is_subject_on_event_id(
     "/books/42",
     "0",
-    Some(PreconditionOptions {
-      recursive: true,
-      ..Default::default()
-    }),
+    Some(PreconditionOptions { recursive: true }),
   )],
 ).await;
 ```
