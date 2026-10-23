@@ -77,8 +77,25 @@ enum State {
 /// What a client remembers about the version of the API, under the lock of its [`ApiVersionCell`]
 struct Memory {
     state: State,
+    /// A probe that finds out again whether the server offers the v2 API, while the client remembers the v1 API for
+    /// every other request, see [`ApiVersionCell::get_or_probe_again_if_v1`]. Only the requests that need the v2 API
+    /// wait for it, and it is held weakly for the same reason as [`State::Probing`].
+    probe_again: Option<(WeakShared<Probe>, u64)>,
     /// How many probes the client started, which numbers them
     probes: u64,
+}
+
+impl Memory {
+    /// Starts a probe with the next number, which the caller keeps weakly in the memory.
+    fn start_probe(&mut self, http: &Http) -> (Shared<Probe>, WeakShared<Probe>, u64) {
+        self.probes += 1;
+        let http = http.clone();
+        let started: Shared<Probe> = async move { probe(&http).await }.boxed().shared();
+        let weak = started
+            .downgrade()
+            .expect("A probe that was just started has not ended");
+        (started, weak, self.probes)
+    }
 }
 
 /// The version of the API that a client sends its requests through, which its first request finds out
@@ -91,6 +108,7 @@ impl ApiVersionCell {
         Self {
             memory: Mutex::new(Memory {
                 state: State::Unknown,
+                probe_again: None,
                 probes: 0,
             }),
         }
@@ -102,6 +120,7 @@ impl ApiVersionCell {
         Self {
             memory: Mutex::new(Memory {
                 state: State::Known(api_version, 0),
+                probe_again: None,
                 probes: 0,
             }),
         }
@@ -126,16 +145,8 @@ impl ApiVersionCell {
                 State::Unknown => None,
             };
             running.unwrap_or_else(|| {
-                memory.probes += 1;
-                let number = memory.probes;
-                let http = http.clone();
-                let started: Shared<Probe> = async move { probe(&http).await }.boxed().shared();
-                memory.state = State::Probing(
-                    started
-                        .downgrade()
-                        .expect("A probe that was just started has not ended"),
-                    number,
-                );
+                let (started, weak, number) = memory.start_probe(http);
+                memory.state = State::Probing(weak, number);
                 (started, number)
             })
         };
@@ -155,11 +166,12 @@ impl ApiVersionCell {
     }
 
     /// Returns the version of the API that the server offers as [`ApiVersionCell::get_or_probe`] does, but finds it
-    /// out again if the client remembers the v1 API from a probe that ended before.
+    /// out again if the client remembers the v1 API, for a request that needs the v2 API.
     ///
-    /// A request that comes while a probe runs waits for it instead, as it does in
-    /// [`ApiVersionCell::get_or_probe`], so that concurrent requests share one probe. If the probe fails, the client
-    /// remembers no version, as after every probe that failed.
+    /// The client keeps remembering the v1 API for every other request meanwhile, so they neither wait for the probe
+    /// nor fail with its error. Only the requests that come through this function wait for it and share it. A probe
+    /// that tells the version replaces the remembered one. One that fails, or that every request waiting for it
+    /// dropped, leaves the v1 API remembered, and the next request through this function starts a new one.
     ///
     /// # Errors
     /// Returns the error that the probe failed with.
@@ -167,13 +179,38 @@ impl ApiVersionCell {
         &self,
         http: &Http,
     ) -> Result<RememberedApi<'_>, ClientError> {
-        {
+        let probe_again = {
             let mut memory = self.lock();
             if matches!(memory.state, State::Known(ApiVersion::V1, _)) {
-                memory.state = State::Unknown;
+                let running = memory
+                    .probe_again
+                    .as_ref()
+                    .and_then(|(probe, number)| probe.upgrade().map(|probe| (probe, *number)));
+                Some(running.unwrap_or_else(|| {
+                    let (started, weak, number) = memory.start_probe(http);
+                    memory.probe_again = Some((weak, number));
+                    (started, number)
+                }))
+            } else {
+                None
+            }
+        };
+        let Some((probe, number)) = probe_again else {
+            return self.get_or_probe(http).await;
+        };
+
+        let result = probe.await;
+
+        // The first request that gets the result ends the probe, and replaces the remembered v1 API with the version
+        // that it found, unless another probe has started since.
+        let mut memory = self.lock();
+        if matches!(memory.probe_again, Some((_, current)) if current == number) {
+            memory.probe_again = None;
+            if let (Ok(api_version), State::Known(ApiVersion::V1, _)) = (&result, &memory.state) {
+                memory.state = State::Known(*api_version, number);
             }
         }
-        self.get_or_probe(http).await
+        result.map(|api_version| self.remembered(api_version, number))
     }
 
     /// The version of the API, as the probe with the given number found it out

@@ -557,34 +557,26 @@ fn v2_write_reply() -> Reply {
     Reply::lines(&lines)
 }
 
-/// Starts a server that offers only the v1 API until the returned flag is set, and the v2 API from then on, as a
-/// server does that is upgraded, and that answers a write through either API with the event it wrote. Every probe
-/// after the upgrade waits for the given gate, if there is one.
-async fn start_server_to_upgrade(
-    gate: Option<watch::Receiver<bool>>,
-) -> (TestServer, Arc<AtomicBool>) {
-    let is_upgraded = Arc::new(AtomicBool::new(false));
-    let server = start_server({
-        let is_upgraded = is_upgraded.clone();
-        move |request: &Request| {
-            if request.path == V1_WRITE {
-                Some(Reply::lines(&[json!([event_data(Api::V1, 0)]).to_string()]))
-            } else if !is_v2(request) {
-                None
-            } else if !is_upgraded.load(Ordering::SeqCst) {
-                Some(not_found())
-            } else if is_probe(request) {
-                gate.clone()
-                    .map(|gate| Reply::Gated(gate, Box::new(probe_reply(Api::V2))))
-            } else if request.path == V2_WRITE {
-                Some(v2_write_reply())
+/// Starts a server whose first probe finds the v1 API, and which answers every later probe as the given reply says, as
+/// a server does that is upgraded meanwhile, and a write through either API with the event it wrote.
+async fn start_server_with_later_probes(later_probes: Reply) -> TestServer {
+    let probes = AtomicUsize::new(0);
+    start_server(move |request: &Request| {
+        if is_probe(request) {
+            Some(if probes.fetch_add(1, Ordering::SeqCst) == 0 {
+                not_found()
             } else {
-                None
-            }
+                later_probes.clone()
+            })
+        } else if request.path == V1_WRITE {
+            Some(Reply::lines(&[json!([event_data(Api::V1, 0)]).to_string()]))
+        } else if request.path == V2_WRITE {
+            Some(v2_write_reply())
+        } else {
+            None
         }
     })
-    .await;
-    (server, is_upgraded)
+    .await
 }
 
 /// Writes an event with a recursive precondition.
@@ -604,10 +596,9 @@ async fn write_recursively(client: &Client) -> Result<Vec<Event>, ClientError> {
 #[tokio::test]
 async fn a_recursive_precondition_finds_out_again_and_is_written_through_the_v2_api_once_the_server_offers_it()
  {
-    let (mut server, is_upgraded) = start_server_to_upgrade(None).await;
+    let mut server = start_server_with_later_probes(probe_reply(Api::V2)).await;
     let client = create_client(&server);
     verify_api_token(&client).await;
-    is_upgraded.store(true, Ordering::SeqCst);
 
     let written = write_recursively(&client)
         .await
@@ -632,7 +623,7 @@ async fn a_recursive_precondition_finds_out_again_and_is_written_through_the_v2_
 #[tokio::test]
 async fn a_recursive_precondition_finds_out_again_and_fails_if_the_server_still_offers_only_the_v1_api()
  {
-    let (mut server, _) = start_server_to_upgrade(None).await;
+    let mut server = start_server_with_later_probes(not_found()).await;
     let client = create_client(&server);
     verify_api_token(&client).await;
 
@@ -668,11 +659,11 @@ async fn a_recursive_precondition_finds_out_again_and_fails_if_the_server_still_
 #[tokio::test]
 async fn concurrent_recursive_writes_find_out_again_with_one_probe_and_are_each_sent_once() {
     let (open_gate, gate) = watch::channel(false);
-    let (mut server, is_upgraded) = start_server_to_upgrade(Some(gate)).await;
+    let mut server =
+        start_server_with_later_probes(Reply::Gated(gate, Box::new(probe_reply(Api::V2)))).await;
     let client = Arc::new(create_client(&server));
     verify_api_token(&client).await;
     let _ = server.received();
-    is_upgraded.store(true, Ordering::SeqCst);
 
     let writes = tokio::spawn({
         let client = client.clone();
@@ -696,4 +687,83 @@ async fn concurrent_recursive_writes_find_out_again_with_one_probe_and_are_each_
         [V2_WRITE, V2_WRITE, V2_WRITE],
         "Expected one probe for all writes, and each write to be sent once"
     );
+}
+
+#[tokio::test]
+async fn a_request_without_a_recursive_precondition_keeps_the_v1_api_while_a_recursive_write_finds_out_again()
+ {
+    let (open_gate, gate) = watch::channel(false);
+    let mut server =
+        start_server_with_later_probes(Reply::Gated(gate, Box::new(probe_reply(Api::V2)))).await;
+    let client = Arc::new(create_client(&server));
+    verify_api_token(&client).await;
+    let _ = server.received();
+
+    let recursive_write = tokio::spawn({
+        let client = client.clone();
+        async move { write_recursively(&client).await }
+    });
+    let request = server.next_request().await;
+    assert!(
+        is_probe(&request),
+        "Expected the probe, but got {request:?}"
+    );
+
+    // While the server holds the probe back, a request without a recursive precondition goes through the v1 API at
+    // once.
+    verify_api_token(&client).await;
+    assert_eq!(paths(&mut server), [V1_VERIFY]);
+
+    open_gate.send(true).expect("Failed to open the gate");
+    let written = timeout(GUARD_TIMEOUT, recursive_write)
+        .await
+        .expect("The write did not end")
+        .expect("The write panicked")
+        .expect("Failed to write events");
+    assert_eq!(written.len(), 1);
+
+    // Once the probe found the v2 API, every request uses it.
+    verify_api_token(&client).await;
+    assert_eq!(paths(&mut server), [V2_WRITE, V2_VERIFY]);
+}
+
+#[tokio::test]
+async fn a_failed_probe_of_a_recursive_write_fails_only_the_write_and_keeps_the_v1_api() {
+    let mut server =
+        start_server_with_later_probes(Reply::text(500, "internal server error\n")).await;
+    let client = create_client(&server);
+    verify_api_token(&client).await;
+
+    let error = db_api_error(
+        write_recursively(&client)
+            .await
+            .expect_err("Expected the write to fail"),
+    );
+    assert_eq!(error.status, 500);
+
+    // A request without a recursive precondition keeps the v1 API, without a probe.
+    verify_api_token(&client).await;
+    assert_eq!(paths(&mut server), [PROBE, V1_VERIFY, PROBE, V1_VERIFY]);
+}
+
+#[tokio::test]
+async fn a_recursive_write_that_is_dropped_while_it_finds_out_again_keeps_the_v1_api() {
+    // The gate stays closed, so the probe never ends.
+    let (_open_gate, gate) = watch::channel(false);
+    let mut server =
+        start_server_with_later_probes(Reply::Gated(gate, Box::new(probe_reply(Api::V2)))).await;
+    let client = create_client(&server);
+    verify_api_token(&client).await;
+    let _ = server.received();
+
+    let mut writing = Box::pin(write_recursively(&client));
+    tokio::select! {
+        result = &mut writing => panic!("Expected the write to wait for the probe, but got {result:?}"),
+        request = server.next_request() => assert!(is_probe(&request), "Expected the probe, but got {request:?}"),
+    }
+    drop(writing);
+
+    // A request without a recursive precondition keeps the v1 API, without a probe.
+    verify_api_token(&client).await;
+    assert_eq!(paths(&mut server), [V1_VERIFY]);
 }
