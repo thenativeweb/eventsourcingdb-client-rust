@@ -57,5 +57,5 @@ pub mod container;
 pub mod error;
 pub mod event;
 
-pub use client::{Client, Precondition, request_options};
+pub use client::{Client, Precondition, PreconditionOptions, request_options};
 pub use event::{Event, EventCandidate, ManagementEvent, TraceInfo};

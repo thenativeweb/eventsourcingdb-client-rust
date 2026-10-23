@@ -151,14 +151,12 @@ match result {
 
 #### Using the `IsSubjectPristine` precondition
 
-If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `IsSubjectPristine` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case a subject (such as `/books/42`) does not yet have any events, use the `is_subject_pristine` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectPristine {
-    subject: "/books/42".to_string(),
-  }],
+  vec![Precondition::is_subject_pristine("/books/42", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -168,14 +166,12 @@ match result {
 
 #### Using the `IsSubjectPopulated` precondition
 
-If you only want to write events in case a subject (such as `/books/42`) already has at least one event, use the `IsSubjectPopulated` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case a subject (such as `/books/42`) already has at least one event, use the `is_subject_populated` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectPopulated {
-    subject: "/books/42".to_string(),
-  }],
+  vec![Precondition::is_subject_populated("/books/42", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -185,15 +181,12 @@ match result {
 
 #### Using the `IsSubjectOnEventId` precondition
 
-If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `IsSubjectOnEventId` precondition to create a precondition and pass it in a vector as the second argument:
+If you only want to write events in case the last event of a subject (such as `/books/42`) has a specific ID (e.g., `0`), use the `is_subject_on_event_id` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsSubjectOnEventId {
-    subject: "/books/42".to_string(),
-    event_id: "0".to_string(),
-  }],
+  vec![Precondition::is_subject_on_event_id("/books/42", "0", None)],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -203,16 +196,39 @@ match result {
 
 *Note that according to the CloudEvents standard, event IDs must be of type string.*
 
+#### Using Preconditions Recursively
+
+If you want the `IsSubjectPristine`, `IsSubjectPopulated`, or `IsSubjectOnEventId` precondition to apply not only to a subject (such as `/books/42`), but also to all its nested subjects, pass a `PreconditionOptions` object as the last argument and set the `recursive` option to `true`. Then `IsSubjectPristine` holds if neither the subject nor any of its nested subjects has an event, `IsSubjectPopulated` holds if any of them has one, and `IsSubjectOnEventId` holds if the last event among all of them has the given ID:
+
+```rust
+use eventsourcingdb::PreconditionOptions;
+
+// ...
+
+let result = client.write_events(
+  vec![event.clone()],
+  vec![Precondition::is_subject_on_event_id(
+    "/books/42",
+    "0",
+    Some(PreconditionOptions { recursive: true }),
+  )],
+).await;
+```
+
+A recursive precondition that does not hold is reported like any other precondition that does not hold. With `None`, or with the `recursive` option set to `false`, a precondition applies to the subject alone.
+
+*Note that only the v2 API checks a precondition recursively. If the server does not offer the v2 API, `write_events` returns a `ClientError::IncompatibleServer` error for a recursive precondition before it sends anything, so nothing is written.*
+
 #### Using the `IsEventQLQueryTrue` precondition
 
-If you want to write events depending on an EventQL query, use the `IsEventQLQueryTrue` precondition to create a precondition and pass it in a vector as the second argument:
+If you want to write events depending on an EventQL query, use the `is_eventql_query_true` function to create a precondition and pass it in a vector as the second argument:
 
 ```rust
 let result = client.write_events(
   vec![event.clone()],
-  vec![Precondition::IsEventQLQueryTrue {
-    query: "FROM e IN events WHERE e.type == 'io.eventsourcingdb.library.book-borrowed' PROJECT INTO COUNT() < 10".to_string(),
-  }],
+  vec![Precondition::is_eventql_query_true(
+    "FROM e IN events WHERE e.type == 'io.eventsourcingdb.library.book-borrowed' PROJECT INTO COUNT() < 10",
+  )],
 ).await;
 match result {
   Ok(written_events) => // ...
@@ -691,6 +707,36 @@ In case you need to set up the client yourself, use the following functions to g
 - `get_mapped_port()` returns the port
 - `get_base_url()` returns the full URL of the container
 - `get_api_token()` returns the API token
+
+## Upgrading From Version 3
+
+Version 4 of the SDK creates preconditions with functions, so that a precondition can get a new option, such as `recursive`, without breaking your code, see [Using Preconditions Recursively](#using-preconditions-recursively). It changes the following:
+
+- The variants of `Precondition` are `#[non_exhaustive]`, so you create a precondition with its function instead of the variant. The functions of the preconditions on a subject take their options as the last argument, which is `None` for a precondition without options:
+
+  ```rust
+  // Before
+  Precondition::IsSubjectPristine { subject: "/books/42".to_string() };
+  Precondition::IsSubjectPopulated { subject: "/books/42".to_string() };
+  Precondition::IsSubjectOnEventId { subject: "/books/42".to_string(), event_id: "0".to_string() };
+  Precondition::IsEventQLQueryTrue { query: query.to_string() };
+
+  // After
+  Precondition::is_subject_pristine("/books/42", None);
+  Precondition::is_subject_populated("/books/42", None);
+  Precondition::is_subject_on_event_id("/books/42", "0", None);
+  Precondition::is_eventql_query_true(query);
+  ```
+
+- For the same reason, a pattern that matches a variant of `Precondition` needs `..`:
+
+  ```rust
+  // Before
+  Precondition::IsSubjectPristine { subject } => // ...
+
+  // After
+  Precondition::IsSubjectPristine { subject, .. } => // ...
+  ```
 
 ## Upgrading From Version 2
 

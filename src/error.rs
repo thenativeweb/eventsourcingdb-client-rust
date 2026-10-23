@@ -56,6 +56,8 @@ pub enum ClientError {
     /// that ended before its end item, or an answer with status `500`. A write fails with its error itself only if it
     /// was certainly not stored: if the connection could not be established at all, or if the DB refused the write.
     OutcomeUnknown(Box<ClientError>),
+    /// The server does not offer the v2 API, which a recursive precondition needs, so the write was not sent
+    IncompatibleServer,
 }
 
 impl fmt::Display for ClientError {
@@ -86,6 +88,10 @@ impl fmt::Display for ClientError {
                 f,
                 "The outcome of the write is unknown, so it may have been stored: {error}"
             ),
+            Self::IncompatibleServer => write!(
+                f,
+                "The server does not offer the v2 API, which a recursive precondition needs"
+            ),
         }
     }
 }
@@ -110,7 +116,8 @@ impl std::error::Error for ClientError {
             | Self::JsonSchemaError
             | Self::InvalidResponseType(_)
             | Self::InvalidServerHeader
-            | Self::ConnectionStalled => None,
+            | Self::ConnectionStalled
+            | Self::IncompatibleServer => None,
         }
     }
 }

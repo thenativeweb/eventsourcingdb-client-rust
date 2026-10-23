@@ -4,11 +4,12 @@ use futures::TryStreamExt;
 use serde_json::{Value, json};
 
 use super::{
-    Api, BOTH_APIS, Reply, Request, TestServer, create_client, is_probe, management_event,
-    probe_reply, skip_probe, start_server, test_candidate,
+    Api, BOTH_APIS, Reply, Request, TestServer, create_client, event_data, is_probe,
+    management_event, probe_reply, skip_probe, start_server, test_candidate,
 };
 use crate::{
-    Precondition,
+    Precondition, PreconditionOptions,
+    error::ClientError,
     request_options::{ObserveEventsOptions, ReadEventsOptions, ReadSubjectsOptions},
 };
 
@@ -70,9 +71,7 @@ async fn every_request_of_the_v2_api_has_its_method_path_and_body() {
     let _ = client
         .write_events(
             vec![test_candidate()],
-            vec![Precondition::IsSubjectPristine {
-                subject: "/test".to_string(),
-            }],
+            vec![Precondition::is_subject_pristine("/test", None)],
         )
         .await
         .expect("Failed to write events");
@@ -203,6 +202,141 @@ async fn every_request_of_the_v2_api_has_its_method_path_and_body() {
         );
         assert_eq!(body(&request), expected_body, "Unexpected body for {path}");
     }
+}
+
+/// How the v1 API answers a write of one event
+fn v1_write_reply() -> Reply {
+    Reply::lines(&[json!([event_data(Api::V1, 0)]).to_string()])
+}
+
+#[tokio::test]
+async fn preconditions_on_a_subject_send_their_options_through_the_v2_api() {
+    let mut server = start_v2_server().await;
+    let client = create_client(&server);
+    let recursive = Some(PreconditionOptions { recursive: true });
+    let not_recursive = Some(PreconditionOptions { recursive: false });
+
+    let _ = client
+        .write_events(
+            vec![test_candidate()],
+            vec![
+                Precondition::is_subject_pristine("/test", recursive.clone()),
+                Precondition::is_subject_populated("/test", recursive.clone()),
+                Precondition::is_subject_on_event_id("/test", "0", recursive),
+                Precondition::is_subject_pristine("/test", not_recursive.clone()),
+                Precondition::is_subject_populated("/test", not_recursive.clone()),
+                Precondition::is_subject_on_event_id("/test", "0", not_recursive),
+                Precondition::is_subject_pristine("/test", None),
+            ],
+        )
+        .await
+        .expect("Failed to write events");
+
+    skip_probe(&mut server).await;
+    let request = server.next_request().await;
+    assert_eq!(request.path, "/api/v2/data/write-events");
+    let body = body(&request).expect("The write has no body");
+    assert_eq!(
+        body["preconditions"],
+        json!([
+            { "type": "isSubjectPristine", "payload": { "subject": "/test", "options": { "recursive": true } } },
+            { "type": "isSubjectPopulated", "payload": { "subject": "/test", "options": { "recursive": true } } },
+            {
+                "type": "isSubjectOnEventId",
+                "payload": { "subject": "/test", "eventId": "0", "options": { "recursive": true } },
+            },
+            { "type": "isSubjectPristine", "payload": { "subject": "/test", "options": { "recursive": false } } },
+            { "type": "isSubjectPopulated", "payload": { "subject": "/test", "options": { "recursive": false } } },
+            {
+                "type": "isSubjectOnEventId",
+                "payload": { "subject": "/test", "eventId": "0", "options": { "recursive": false } },
+            },
+            // Without options, the field is left out, as it was before there were any.
+            { "type": "isSubjectPristine", "payload": { "subject": "/test" } },
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_recursive_precondition_fails_through_the_v1_api_without_sending_the_write() {
+    let recursive = || Some(PreconditionOptions { recursive: true });
+    let cases = [
+        vec![Precondition::is_subject_pristine("/test", recursive())],
+        vec![Precondition::is_subject_populated("/test", recursive())],
+        vec![Precondition::is_subject_on_event_id(
+            "/test",
+            "0",
+            recursive(),
+        )],
+        // A single recursive precondition among others is enough.
+        vec![
+            Precondition::is_subject_pristine("/test", None),
+            Precondition::is_subject_populated("/test", recursive()),
+        ],
+    ];
+
+    for preconditions in cases {
+        let case = format!("{preconditions:?}");
+        let mut server = start_server(Api::V1, v1_write_reply()).await;
+        let client = create_client(&server);
+
+        let result = client
+            .write_events(vec![test_candidate()], preconditions)
+            .await;
+        assert!(
+            matches!(result, Err(ClientError::IncompatibleServer)),
+            "Expected an incompatible server for {case}, but got {result:?}"
+        );
+
+        skip_probe(&mut server).await;
+        let requests = server.received();
+        assert!(
+            requests.is_empty(),
+            "Expected the write not to be sent for {case}, but got {requests:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_precondition_that_is_not_recursive_is_sent_through_the_v1_api_without_its_options() {
+    let mut server = start_server(Api::V1, v1_write_reply()).await;
+    let client = create_client(&server);
+    let not_recursive = || Some(PreconditionOptions { recursive: false });
+
+    let _ = client
+        .write_events(
+            vec![test_candidate()],
+            vec![
+                Precondition::is_subject_pristine("/test", not_recursive()),
+                Precondition::is_subject_populated("/test", not_recursive()),
+                Precondition::is_subject_on_event_id("/test", "0", not_recursive()),
+                Precondition::is_subject_pristine("/test", None),
+                Precondition::is_eventql_query_true("FROM e IN events PROJECT INTO COUNT() == 0"),
+            ],
+        )
+        .await
+        .expect("Failed to write events");
+
+    skip_probe(&mut server).await;
+    let request = server.next_request().await;
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/api/v1/write-events");
+    assert_eq!(
+        body(&request),
+        Some(json!({
+            "events": [serde_json::to_value(test_candidate()).unwrap()],
+            "preconditions": [
+                { "type": "isSubjectPristine", "payload": { "subject": "/test" } },
+                { "type": "isSubjectPopulated", "payload": { "subject": "/test" } },
+                { "type": "isSubjectOnEventId", "payload": { "subject": "/test", "eventId": "0" } },
+                { "type": "isSubjectPristine", "payload": { "subject": "/test" } },
+                {
+                    "type": "isEventQlQueryTrue",
+                    "payload": { "query": "FROM e IN events PROJECT INTO COUNT() == 0" },
+                },
+            ],
+        }))
+    );
 }
 
 #[tokio::test]

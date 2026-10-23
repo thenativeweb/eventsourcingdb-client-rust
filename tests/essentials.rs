@@ -1,6 +1,6 @@
 mod utils;
 use eventsourcingdb::{Client, error::ClientError};
-use utils::create_test_container;
+use utils::{create_test_container, offers_v2_api};
 
 #[tokio::test]
 async fn ping() {
@@ -49,11 +49,7 @@ async fn verify_api_token_invalid_token_errors() {
 async fn uses_the_v2_api_if_the_server_offers_it() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
-    let offers_v2_api = reqwest::get(client.get_base_url().join("/api/v2/system/ping").unwrap())
-        .await
-        .expect("Failed to ping through the v2 API")
-        .status()
-        .is_success();
+    let offers_v2_api = offers_v2_api(&client).await;
 
     // The answer names the route that the client registered the schema through.
     let registered = client

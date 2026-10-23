@@ -37,7 +37,7 @@ use crate::{
 use api_version::{ApiVersionCell, RememberedApi};
 use futures::Stream;
 use http::Http;
-pub use precondition::Precondition;
+pub use precondition::{Precondition, PreconditionOptions};
 use std::time::Duration;
 use url::Url;
 
@@ -535,6 +535,8 @@ impl Client {
     ///
     /// # Errors
     /// This function will return an error if the request fails or if the URL is invalid.
+    /// If a precondition is recursive, see [`PreconditionOptions`], and the server does not offer the v2 API, it returns
+    /// [`ClientError::IncompatibleServer`] before it sends anything.
     pub async fn write_events(
         &self,
         events: Vec<EventCandidate>,
