@@ -705,7 +705,7 @@ async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Re
 /// is answered with 200, so remembering would only spare a ping of the v2 API in attempts that fail anyway.
 async fn answers_ping(client: &reqwest::Client, address: &str) -> bool {
     let Ok(response) = client
-        .get(format!("http://{address}/api/v2/system/ping"))
+        .get(format!("http://{address}{}", v2::PING_PATH))
         .send()
         .await
     else {

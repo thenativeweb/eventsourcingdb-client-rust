@@ -360,6 +360,7 @@ enum Answer {
 }
 
 const OK: Answer = Answer::Status("HTTP/1.1 200 OK");
+const NO_CONTENT: Answer = Answer::Status("HTTP/1.1 204 No Content");
 const NOT_FOUND: Answer = Answer::Status("HTTP/1.1 404 Not Found");
 const SERVICE_UNAVAILABLE: Answer = Answer::Status("HTTP/1.1 503 Service Unavailable");
 
@@ -475,8 +476,7 @@ impl Inspect for LatePort {
 
 #[tokio::test]
 async fn waiting_reads_the_port_anew_for_each_ping_and_accepts_only_status_200() {
-    let no_content = Answer::Status("HTTP/1.1 204 No Content");
-    let stale = TestServer::start(no_content, no_content).await;
+    let stale = TestServer::start(NO_CONTENT, NO_CONTENT).await;
     let database = TestServer::start(OK, OK).await;
     let container = LatePort {
         stale: stale.address.clone(),
@@ -682,8 +682,9 @@ async fn waiting_tries_again_without_asking_the_ping_of_the_v1_api_if_the_ping_o
 
 #[tokio::test]
 async fn waiting_starts_each_attempt_with_the_ping_of_the_v2_api() {
-    // The ping of the v1 API fails as well, so that each attempt asks both.
-    let server = TestServer::start(NOT_FOUND, SERVICE_UNAVAILABLE).await;
+    // The ping of the v1 API answers with a status of success other than 200, which does not count either, so that
+    // each attempt asks both.
+    let server = TestServer::start(NOT_FOUND, NO_CONTENT).await;
 
     let waited = wait_until_reachable(
         &Published(server.address.clone()),
