@@ -2,7 +2,6 @@ mod utils;
 use std::time::Duration;
 
 use eventsourcingdb::error::ContainerError;
-use reqwest::StatusCode;
 use utils::{create_test_container, create_test_container_builder};
 
 #[tokio::test]
@@ -23,26 +22,9 @@ async fn get_base_url() {
 #[tokio::test]
 async fn db_is_reachable() {
     let c = create_test_container().await;
-    let base_url = c.get_base_url().await.unwrap();
-    let http_client = reqwest::Client::new();
-    let mut response = http_client
-        .get(base_url.join("/api/v2/system/ping").unwrap())
-        .send()
-        .await
-        .unwrap();
-    // A server without the v2 API answers its ping with 404 or 405, and is reachable if it answers the ping of the v1
-    // API.
-    if matches!(
-        response.status(),
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-    ) {
-        response = http_client
-            .get(base_url.join("/api/v1/ping").unwrap())
-            .send()
-            .await
-            .unwrap();
-    }
-    assert_eq!(response.status(), StatusCode::OK);
+    // The client pings the database on its own, so that this does not depend on how the container waits for it.
+    let client = c.get_client().await.unwrap();
+    client.ping().await.unwrap();
 }
 
 #[tokio::test]
