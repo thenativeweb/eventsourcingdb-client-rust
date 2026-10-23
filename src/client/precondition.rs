@@ -2,6 +2,18 @@ use serde::Serialize;
 
 /// Options for a precondition on a subject, which [`Precondition::is_subject_pristine`],
 /// [`Precondition::is_subject_populated`], and [`Precondition::is_subject_on_event_id`] take
+///
+/// ```
+/// use eventsourcingdb::{Precondition, PreconditionOptions};
+///
+/// let precondition = Precondition::is_subject_pristine(
+///     "/orders/42",
+///     Some(PreconditionOptions {
+///         recursive: true,
+///         ..Default::default()
+///     }),
+/// );
+/// ```
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreconditionOptions {
