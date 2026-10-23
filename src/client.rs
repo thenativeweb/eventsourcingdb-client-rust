@@ -27,7 +27,7 @@ pub(crate) mod stall_timeout;
 #[cfg(test)]
 mod tests;
 mod v1;
-mod v2;
+pub(crate) mod v2;
 
 use crate::{
     error::ClientError,

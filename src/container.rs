@@ -71,7 +71,10 @@ use tokio::{
 };
 use url::{Host, Url};
 
-use crate::{client::Client, error::ContainerError};
+use crate::{
+    client::{Client, v2},
+    error::ContainerError,
+};
 
 /// How long each container may take by default, from creating it until EventSourcingDB in it answers a ping
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -710,7 +713,7 @@ async fn answers_ping(client: &reqwest::Client, address: &str) -> bool {
     };
     match response.status() {
         StatusCode::OK => true,
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => client
+        status if v2::is_not_offered(status) => client
             .get(format!("http://{address}/api/v1/ping"))
             .send()
             .await

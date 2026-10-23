@@ -271,7 +271,7 @@ pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
         // A proxy in front of EventSourcingDB that only forwards the v1 API answers with its own 404, so this
         // answer means v1 also if it is not from EventSourcingDB. The requests through the v1 API check that their
         // answers are.
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
+        status if v2::is_not_offered(status) => {
             // Reading the body lets the connection carry the next request.
             let _ = http.read_text(response).await;
             Ok(ApiVersion::V1)
