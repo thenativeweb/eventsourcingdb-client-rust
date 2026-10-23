@@ -698,11 +698,11 @@ async fn wait_until_reachable(container: &impl Inspect, deadline: Instant) -> Re
 
 /// Tells whether EventSourcingDB at the given address answers a ping with status 200.
 ///
-/// It asks the ping of the v2 API, and the ping of the v1 API only if the server answers that with 404 or 405, as a
-/// server without the v2 API does, so that a server with either API counts as reachable. Any other answer, and a
-/// request that fails or runs into its timeout, means that EventSourcingDB is not ready yet, so it does not lead to the
-/// ping of the v1 API. Nothing is remembered from one call to the next: waiting ends with the first ping that is
-/// answered with 200, so remembering would only spare a ping of the v2 API in attempts that fail anyway.
+/// It asks the ping of the v2 API, and the ping of the v1 API only if the server answers that as a server without the
+/// v2 API does, see [`v2::is_not_offered`], so that a server with either API counts as reachable. Any other answer,
+/// and a request that fails or runs into its timeout, means that EventSourcingDB is not ready yet, so it does not lead
+/// to the ping of the v1 API. Nothing is remembered from one call to the next: waiting ends with the first ping that
+/// is answered with 200, so remembering would only spare a ping of the v2 API in attempts that fail anyway.
 async fn answers_ping(client: &reqwest::Client, address: &str) -> bool {
     let Ok(response) = client
         .get(format!("http://{address}/api/v2/system/ping"))
