@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle, time::timeout};
 
 use super::{
-    Api, Client, GUARD_TIMEOUT, Reply, Request, TestServer, create_client, db_api_error, is_probe,
-    probe_reply, test_candidate,
+    Api, Client, GUARD_TIMEOUT, Reply, Request, TestServer, create_client, db_api_error,
+    event_data, is_probe, probe_reply, test_candidate,
 };
 use crate::{
     Precondition, PreconditionOptions,
@@ -547,6 +547,7 @@ async fn a_404_that_arrives_late_keeps_the_api_that_a_newer_probe_found() {
     );
 }
 
+const V1_WRITE: &str = "/api/v1/write-events";
 const V2_WRITE: &str = "/api/v2/data/write-events";
 
 /// How the v2 API answers a write of one event
@@ -557,7 +558,7 @@ fn v2_write_reply() -> Reply {
 }
 
 /// Starts a server that offers only the v1 API until the returned flag is set, and the v2 API from then on, as a
-/// server does that is upgraded, and that answers a write through the v2 API with the event it wrote. Every probe
+/// server does that is upgraded, and that answers a write through either API with the event it wrote. Every probe
 /// after the upgrade waits for the given gate, if there is one.
 async fn start_server_to_upgrade(
     gate: Option<watch::Receiver<bool>>,
@@ -566,7 +567,9 @@ async fn start_server_to_upgrade(
     let server = start_server({
         let is_upgraded = is_upgraded.clone();
         move |request: &Request| {
-            if !is_v2(request) {
+            if request.path == V1_WRITE {
+                Some(Reply::lines(&[json!([event_data(Api::V1, 0)]).to_string()]))
+            } else if !is_v2(request) {
                 None
             } else if !is_upgraded.load(Ordering::SeqCst) {
                 Some(not_found())
@@ -639,12 +642,26 @@ async fn a_recursive_precondition_finds_out_again_and_fails_if_the_server_still_
         "Expected an incompatible server, but got {result:?}"
     );
 
-    // A later request keeps the v1 API, which the probe found out again.
+    // A later request keeps the v1 API, which the probe found out again, and so does a later write without a
+    // recursive precondition.
     verify_api_token(&client).await;
+    let _ = timeout(
+        GUARD_TIMEOUT,
+        client.write_events(
+            vec![test_candidate()],
+            vec![Precondition::is_subject_pristine(
+                "/test",
+                Some(PreconditionOptions { recursive: false }),
+            )],
+        ),
+    )
+    .await
+    .expect("The write did not end")
+    .expect("Failed to write events");
     assert_eq!(
         paths(&mut server),
-        [PROBE, V1_VERIFY, PROBE, V1_VERIFY],
-        "Expected the write to find out the API again, and not to be sent"
+        [PROBE, V1_VERIFY, PROBE, V1_VERIFY, V1_WRITE],
+        "Expected only the recursive write to find out the API again, and not to be sent"
     );
 }
 
