@@ -2,6 +2,7 @@ mod utils;
 use std::time::Duration;
 
 use eventsourcingdb::error::ContainerError;
+use reqwest::StatusCode;
 use utils::{create_test_container, create_test_container_builder};
 
 #[tokio::test]
@@ -23,10 +24,25 @@ async fn get_base_url() {
 async fn db_is_reachable() {
     let c = create_test_container().await;
     let base_url = c.get_base_url().await.unwrap();
-    let ping_url = base_url
-        .join("/api/v1/ping")
-        .expect("Failed to join ping endpoint");
-    reqwest::Client::new().get(ping_url).send().await.unwrap();
+    let http_client = reqwest::Client::new();
+    let mut response = http_client
+        .get(base_url.join("/api/v2/system/ping").unwrap())
+        .send()
+        .await
+        .unwrap();
+    // A server without the v2 API answers its ping with 404 or 405, and is reachable if it answers the ping of the v1
+    // API.
+    if matches!(
+        response.status(),
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+    ) {
+        response = http_client
+            .get(base_url.join("/api/v1/ping").unwrap())
+            .send()
+            .await
+            .unwrap();
+    }
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
