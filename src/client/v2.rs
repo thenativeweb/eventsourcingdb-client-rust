@@ -28,7 +28,7 @@ use crate::{
             EventType, ObserveEventsOptions, ReadEventsOptions, ReadSubjectsOptions,
         },
     },
-    error::{ClientError, DbApiError, code},
+    error::{ClientError, DbApiError},
     event::{Event, EventCandidate, ManagementEvent},
 };
 
@@ -332,14 +332,18 @@ pub async fn write_events(
 }
 
 /// Tells whether the server refused a write through the v2 API before storing anything, which it does with every
-/// error of the domain except `store-failed`, and with the status `400`, `401`, `408`, `413`, `429`, and `503`.
+/// error of the domain, and with the status `400`, `401`, `408`, `413`, `429`, and `503`.
+///
+/// This includes the error `store-failed`, which the server sends only for writes that it refuses before storing
+/// them, since its store has failed before and it refuses writes until it is restarted. The write during which storing
+/// fails gets an error without a code instead, the status `500` or a stream that ends before its end item, which
+/// leaves the outcome unknown.
 fn is_refusal(error: &DbApiError) -> bool {
-    if error.status == StatusCode::OK {
-        return error.code != code::STORE_FAILED;
-    }
+    // Every error of the domain arrives at status 200, as an item of the answer.
     matches!(
         error.status,
-        StatusCode::BAD_REQUEST
+        StatusCode::OK
+            | StatusCode::BAD_REQUEST
             | StatusCode::UNAUTHORIZED
             | StatusCode::REQUEST_TIMEOUT
             | StatusCode::PAYLOAD_TOO_LARGE

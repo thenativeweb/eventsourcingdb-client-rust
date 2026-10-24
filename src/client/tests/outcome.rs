@@ -154,12 +154,14 @@ async fn a_write_is_certainly_not_stored_if_establishing_the_connection_stalls()
 #[tokio::test]
 async fn a_write_is_certainly_not_stored_if_the_server_refuses_it() {
     for write in BOTH_WRITES {
-        // Through the v2 API, every error of the domain except store-failed is a refusal …
+        // Through the v2 API, every error of the domain is a refusal, store-failed included, since the server sends it
+        // only for writes that it refuses before storing them …
         for slug_code in [
             code::PRECONDITION_VIOLATED,
             code::EVENT_SCHEMA_ALREADY_REGISTERED,
             code::STORE_READ_ONLY,
             code::LICENSE_INVALID,
+            code::STORE_FAILED,
         ] {
             let error = fail_write(Api::V2, write, domain_error(slug_code)).await;
             assert_not_stored(
@@ -256,15 +258,7 @@ async fn the_outcome_of_a_write_is_unknown_after_every_other_failure() {
             );
         }
 
-        // Through the v2 API, the error store-failed leaves the outcome unknown …
-        let error = fail_write(Api::V2, write, domain_error(code::STORE_FAILED)).await;
-        assert_outcome_unknown(
-            &error,
-            |cause| matches!(cause, ClientError::DbApiError(error) if error.code == code::STORE_FAILED),
-            &format!("{write:?} with store-failed"),
-        );
-
-        // … and so does a stream that ends before its end item.
+        // Through the v2 API, a stream that ends before its end item leaves the outcome unknown as well.
         let error = fail_write(Api::V2, write, Reply::lines(&[Api::V2.heartbeat()])).await;
         assert_outcome_unknown(
             &error,
