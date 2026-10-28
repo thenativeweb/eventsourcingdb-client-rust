@@ -126,10 +126,9 @@ async fn a_failed_probe_is_not_remembered_and_the_next_request_probes_again() {
             Reply::text(401, "unauthorized\n"),
             |error| matches!(error, ClientError::DbApiError(error) if error.status == 401),
         ),
-        (
-            not_from_eventsourcingdb,
-            |error| matches!(error, ClientError::DbApiError(error) if error.status == 502 && error.code.is_empty()),
-        ),
+        (not_from_eventsourcingdb, |error| {
+            matches!(error, ClientError::InvalidServerHeader)
+        }),
         (not_from_eventsourcingdb_success, |error| {
             matches!(error, ClientError::InvalidServerHeader)
         }),

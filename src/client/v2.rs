@@ -18,7 +18,7 @@ use serde_json::{Map, Value, value::RawValue};
 
 use super::{
     api_version::RememberedV2,
-    http::{Http, is_from_eventsourcingdb, query, stream_ended_unexpectedly},
+    http::{Http, query, require_eventsourcingdb, stream_ended_unexpectedly},
     outcome,
 };
 use crate::{
@@ -140,7 +140,6 @@ fn domain_error(data: &RawValue) -> ClientError {
             },
             status: StatusCode::OK,
             retry_after: None,
-            is_from_eventsourcingdb: true,
         }
         .into(),
         Err(error) => error.into(),
@@ -171,8 +170,8 @@ pub fn is_event_envelope(envelope: &Envelope) -> bool {
 /// or `405`, the client forgets the v2 API.
 ///
 /// # Errors
-/// Returns a [`DbApiError`] with the status and the text of the response if its status is not `200`, and
-/// [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, but reports success.
+/// Returns [`ClientError::InvalidServerHeader`] if the response is not from EventSourcingDB, whatever its status, and
+/// a [`DbApiError`] with the status and the text of the response if its status is not `200`.
 async fn send<T: Serialize + ?Sized>(
     http: &Http,
     remembered: RememberedV2<'_>,
@@ -205,14 +204,10 @@ async fn check_response(
         remembered.forget();
     }
 
-    let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
+    require_eventsourcingdb(&response)?;
 
     if response.status() == StatusCode::OK {
-        return if is_from_eventsourcingdb {
-            Ok(response)
-        } else {
-            Err(ClientError::InvalidServerHeader)
-        };
+        return Ok(response);
     }
     Err(http.transport_error(response).await.into())
 }

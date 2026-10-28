@@ -149,6 +149,26 @@ fn answer_without_v2((status, text, is_from_eventsourcingdb): (u16, &str, bool))
     }
 }
 
+/// Asserts that the call failed with the answer of a server without the v2 API: with the status and the text of the
+/// answer if it is from EventSourcingDB, and as an invalid server header if it is not.
+fn assert_fails_as_without_v2(
+    error: ClientError,
+    (status, text, is_from_eventsourcingdb): (u16, &str, bool),
+    call: impl std::fmt::Debug,
+) {
+    if !is_from_eventsourcingdb {
+        assert!(
+            matches!(error, ClientError::InvalidServerHeader),
+            "Expected an invalid server header for {call:?}, but got {error:?}"
+        );
+        return;
+    }
+    let error = db_api_error(error);
+    assert_eq!(error.status, status, "Unexpected status for {call:?}");
+    assert_eq!(error.description, text.trim_end());
+    assert_eq!(error.code, "");
+}
+
 /// The answer of EventSourcingDB 1.2 to every path of the v2 API
 fn not_found() -> Reply {
     Reply::text(404, "404 page not found\n")
@@ -221,15 +241,11 @@ async fn a_read_that_gets_404_or_405_through_the_v2_api_fails_and_the_next_reque
             is_rolled_back.store(true, Ordering::SeqCst);
 
             // The call fails as it would if the client kept the v2 API.
-            let error = db_api_error(
-                call.send(&client)
-                    .await
-                    .expect_err("Expected the call to fail"),
-            );
-            let (status, text, _) = answer;
-            assert_eq!(error.status, status, "Unexpected status for {call:?}");
-            assert_eq!(error.description, text.trim_end());
-            assert_eq!(error.code, "");
+            let error = call
+                .send(&client)
+                .await
+                .expect_err("Expected the call to fail");
+            assert_fails_as_without_v2(error, answer, call);
 
             verify_api_token(&client).await;
             assert_eq!(
@@ -254,12 +270,10 @@ async fn a_write_that_gets_404_or_405_through_the_v2_api_has_an_unknown_outcome_
 
             // The write fails as it would if the client kept the v2 API.
             let error = match call.send(&client).await {
-                Err(ClientError::OutcomeUnknown(cause)) => db_api_error(*cause),
+                Err(ClientError::OutcomeUnknown(cause)) => *cause,
                 result => panic!("Expected an unknown outcome for {call:?}, but got {result:?}"),
             };
-            let (status, text, _) = answer;
-            assert_eq!(error.status, status, "Unexpected status for {call:?}");
-            assert_eq!(error.description, text.trim_end());
+            assert_fails_as_without_v2(error, answer, call);
 
             verify_api_token(&client).await;
             assert_eq!(

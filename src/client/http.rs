@@ -266,19 +266,14 @@ impl Http {
         stall_timeout::read_text(response, self.stall_timeout).await
     }
 
-    /// Turns a response that reports an error with its status into a [`DbApiError`] with the status and the text of
-    /// the response, and, for status `429`, how long to wait before trying again.
+    /// Turns a response of EventSourcingDB that reports an error with its status into a [`DbApiError`] with the
+    /// status and the text of the response, and, for status `429`, how long to wait before trying again. A response
+    /// that is not from EventSourcingDB has to be refused before, with [`require_eventsourcingdb`].
     pub async fn transport_error(&self, response: Response) -> DbApiError {
         let status = response.status();
         let retry_after = retry_after(&response);
-        let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
         let text = self.read_text(response).await;
-        let error = DbApiError::from_status(status, &text, retry_after);
-        if is_from_eventsourcingdb {
-            error
-        } else {
-            error.not_from_eventsourcingdb()
-        }
+        DbApiError::from_status(status, &text, retry_after)
     }
 
     /// Splits the body of the response into lines, ending with [`ClientError::ConnectionStalled`] once nothing
@@ -306,8 +301,19 @@ pub fn stream_ended_unexpectedly() -> ClientError {
     )))
 }
 
+/// Refuses a response that is not from EventSourcingDB with [`ClientError::InvalidServerHeader`], whatever its
+/// status, since only EventSourcingDB reports a [`DbApiError`]. An error answer of a proxy in front of it, for
+/// example, tells nothing about the request, and nothing about whether a write was stored.
+pub fn require_eventsourcingdb(response: &Response) -> Result<(), ClientError> {
+    if is_from_eventsourcingdb(response) {
+        Ok(())
+    } else {
+        Err(ClientError::InvalidServerHeader)
+    }
+}
+
 /// Tells whether the response is from EventSourcingDB, which names itself in the `Server` header.
-pub fn is_from_eventsourcingdb(response: &Response) -> bool {
+fn is_from_eventsourcingdb(response: &Response) -> bool {
     response
         .headers()
         .get(header::SERVER)
