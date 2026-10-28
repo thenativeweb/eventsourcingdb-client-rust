@@ -43,7 +43,8 @@ pub enum ClientError {
     CloudeventsMessageError(Arc<cloudevents::message::Error>),
     /// The database returned an invalid response type
     InvalidResponseType(String),
-    /// The server header is invalid, so the answer is not from EventSourcingDB
+    /// The answer is not from EventSourcingDB, which names itself in the `Server` header, such as one of a proxy in
+    /// front of it, whatever its status, since only EventSourcingDB reports a [`DbApiError`]
     InvalidServerHeader,
     /// Nothing at all arrived from the server for the stall timeout, which is 30 seconds by default, see
     /// [`crate::client::ClientBuilder::stall_timeout`]
@@ -173,8 +174,8 @@ impl From<cloudevents::message::Error> for ClientError {
 ///
 /// This is every error that comes from the DB itself: an error the DB answers with a status other than `200`, and an
 /// error that it sends in the body of an answer, at status `200`, as an item of a stream or as a single answer. An
-/// error answer that is not from the DB, such as one of a proxy in front of it, is reported the same way, with its
-/// status and text and without a code.
+/// error answer that is not from the DB, such as one of a proxy in front of it, is a
+/// [`ClientError::InvalidServerHeader`] instead.
 ///
 /// ```
 /// use eventsourcingdb::error::{ClientError, code};
@@ -189,7 +190,7 @@ impl From<cloudevents::message::Error> for ClientError {
 ///     }
 /// }
 /// ```
-#[derive(Clone, Error)]
+#[derive(Clone, Debug, Error, PartialEq)]
 #[error("{}", describe_db_api_error(self))]
 #[non_exhaustive]
 pub struct DbApiError {
@@ -208,36 +209,6 @@ pub struct DbApiError {
     /// `429`, which it sends once there are too many requests. It is `None` for every other status, and if the
     /// header is missing.
     pub retry_after: Option<Duration>,
-    /// Whether the answer is from EventSourcingDB, which names itself in the `Server` header. An error answer of a
-    /// proxy in front of it, for example, is not, so it tells nothing about whether a write was stored.
-    pub(crate) is_from_eventsourcingdb: bool,
-}
-
-// Debug and PartialEq leave out whether the error is from EventSourcingDB, which only the SDK itself uses.
-#[allow(
-    clippy::missing_fields_in_debug,
-    reason = "Whether the error is from EventSourcingDB is internal to the SDK"
-)]
-impl fmt::Debug for DbApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DbApiError")
-            .field("code", &self.code)
-            .field("description", &self.description)
-            .field("details", &self.details)
-            .field("status", &self.status)
-            .field("retry_after", &self.retry_after)
-            .finish()
-    }
-}
-
-impl PartialEq for DbApiError {
-    fn eq(&self, other: &Self) -> bool {
-        self.code == other.code
-            && self.description == other.description
-            && self.details == other.details
-            && self.status == other.status
-            && self.retry_after == other.retry_after
-    }
 }
 
 impl DbApiError {
@@ -257,14 +228,7 @@ impl DbApiError {
             } else {
                 None
             },
-            is_from_eventsourcingdb: true,
         }
-    }
-
-    /// Marks the error as one of an answer that is not from EventSourcingDB.
-    pub(crate) fn not_from_eventsourcingdb(mut self) -> Self {
-        self.is_from_eventsourcingdb = false;
-        self
     }
 
     /// Sets the code of the error.

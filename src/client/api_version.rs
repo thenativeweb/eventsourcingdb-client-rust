@@ -13,7 +13,7 @@ use futures::{
 use reqwest::{Method, StatusCode};
 
 use super::{
-    http::{Http, is_from_eventsourcingdb},
+    http::{Http, require_eventsourcingdb},
     v2,
 };
 use crate::error::ClientError;
@@ -254,9 +254,16 @@ pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
     let request = http.request_without_api_token(Method::GET, v2::PING_PATH, None::<&()>)?;
     let response = http.send(request).await?;
 
-    let is_from_eventsourcingdb = is_from_eventsourcingdb(&response);
+    // A proxy in front of EventSourcingDB that only forwards the v1 API answers with its own 404, so this answer
+    // means v1 also if it is not from EventSourcingDB. The requests through the v1 API check that their answers are.
+    if v2::is_not_offered(response.status()) {
+        // Reading the body lets the connection carry the next request.
+        let _ = http.read_text(response).await;
+        return Ok(ApiVersion::V1);
+    }
+
+    require_eventsourcingdb(&response)?;
     match response.status() {
-        StatusCode::OK if !is_from_eventsourcingdb => Err(ClientError::InvalidServerHeader),
         StatusCode::OK => {
             let envelope: v2::Envelope = http.read_json(response).await?;
             if v2::is_event_envelope(&envelope) {
@@ -267,14 +274,6 @@ pub async fn probe(http: &Http) -> Result<ApiVersion, ClientError> {
                     envelope.ty
                 )))
             }
-        }
-        // A proxy in front of EventSourcingDB that only forwards the v1 API answers with its own 404, so this
-        // answer means v1 also if it is not from EventSourcingDB. The requests through the v1 API check that their
-        // answers are.
-        status if v2::is_not_offered(status) => {
-            // Reading the body lets the connection carry the next request.
-            let _ = http.read_text(response).await;
-            Ok(ApiVersion::V1)
         }
         _ => Err(http.transport_error(response).await.into()),
     }

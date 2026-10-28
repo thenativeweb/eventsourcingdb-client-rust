@@ -28,8 +28,8 @@ pub fn of_write<T>(
         }
         let is_certainly_not_stored = match &error {
             ClientError::ReqwestError(error) => error.is_connect(),
-            // Only EventSourcingDB itself can refuse a write.
-            ClientError::DbApiError(error) => error.is_from_eventsourcingdb && is_refusal(error),
+            // Only EventSourcingDB itself can refuse a write, and only its answers are a DbApiError.
+            ClientError::DbApiError(error) => is_refusal(error),
             _ => false,
         };
         if is_certainly_not_stored {

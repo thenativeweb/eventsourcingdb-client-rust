@@ -377,77 +377,44 @@ fn proxy_answer(status: u16, body: &str) -> Reply {
     }
 }
 
+/// The answers of a proxy in front of EventSourcingDB, which reports success, or an error with its status
+const PROXY_ANSWERS: [(u16, &str); 5] = [
+    (200, "{}\n"),
+    (404, "not found\n"),
+    (405, "Method Not Allowed\n"),
+    (502, "bad gateway\n"),
+    (504, "gateway timeout\n"),
+];
+
 #[tokio::test]
-async fn an_error_answer_of_a_proxy_to_a_single_answer_is_a_db_api_error_without_a_code() {
+async fn a_single_answer_that_is_not_from_eventsourcingdb_is_an_invalid_server_header() {
     for api in BOTH_APIS {
-        for (status, text) in [
-            (405, "Method Not Allowed\n"),
-            (502, "bad gateway\n"),
-            (504, "gateway timeout\n"),
-        ] {
-            let error = db_api_error(
-                fail_with(api, proxy_answer(status, text), |client| async move {
-                    client.read_event_type("io.eventsourcingdb.test").await
-                })
-                .await,
+        for (status, text) in PROXY_ANSWERS {
+            let error = fail_with(api, proxy_answer(status, text), |client| async move {
+                client.read_event_type("io.eventsourcingdb.test").await
+            })
+            .await;
+            assert!(
+                matches!(error, ClientError::InvalidServerHeader),
+                "Expected an invalid server header for {status} through {api:?}, but got {error:?}"
             );
-            assert_eq!(error.status, status);
-            assert_eq!(error.description, text.trim_end());
-            assert_eq!(error.code, "");
         }
-    }
-
-    // The codes of the v1 API are only assigned to answers of EventSourcingDB.
-    let error = db_api_error(
-        fail_with(
-            Api::V1,
-            proxy_answer(404, "not found\n"),
-            |client| async move { client.read_event_type("io.eventsourcingdb.test").await },
-        )
-        .await,
-    );
-    assert_eq!(error.status, 404);
-    assert_eq!(error.code, "");
-}
-
-#[tokio::test]
-async fn a_success_answer_that_is_not_from_eventsourcingdb_is_an_invalid_server_header() {
-    for api in BOTH_APIS {
-        let error = fail_with(api, proxy_answer(200, "{}"), |client| async move {
-            client.read_event_type("io.eventsourcingdb.test").await
-        })
-        .await;
-        assert!(
-            matches!(error, ClientError::InvalidServerHeader),
-            "Expected an invalid server header, but got {error:?}"
-        );
     }
 }
 
 #[tokio::test]
-async fn an_error_answer_of_a_proxy_to_a_stream_is_a_db_api_error_without_a_code() {
+async fn a_stream_that_is_not_from_eventsourcingdb_is_an_invalid_server_header() {
     for api in BOTH_APIS {
-        for (status, text) in [(405, "Method Not Allowed\n"), (502, "bad gateway\n")] {
-            let error = db_api_error(
-                fail_with(api, proxy_answer(status, text), |client| async move {
-                    client.read_events("/test", None).await.map(|_| ())
-                })
-                .await,
+        for (status, text) in PROXY_ANSWERS {
+            let error = fail_with(api, proxy_answer(status, text), |client| async move {
+                client.read_events("/test", None).await.map(|_| ())
+            })
+            .await;
+            assert!(
+                matches!(error, ClientError::InvalidServerHeader),
+                "Expected an invalid server header for {status} through {api:?}, but got {error:?}"
             );
-            assert_eq!(error.status, status);
-            assert_eq!(error.description, text.trim_end());
-            assert_eq!(error.code, "");
         }
-
-        // A success answer that is not from EventSourcingDB still is an invalid server header.
-        let error = fail_with(api, proxy_answer(200, "{}\n"), |client| async move {
-            client.read_events("/test", None).await.map(|_| ())
-        })
-        .await;
-        assert!(
-            matches!(error, ClientError::InvalidServerHeader),
-            "Expected an invalid server header, but got {error:?}"
-        );
     }
 }
 

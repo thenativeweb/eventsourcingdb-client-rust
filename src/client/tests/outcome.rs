@@ -230,13 +230,7 @@ async fn the_outcome_of_a_write_is_unknown_after_every_other_failure() {
                 let error = fail_write(api, write, reply).await;
                 assert_outcome_unknown(
                     &error,
-                    |cause| {
-                        if status == 200 {
-                            matches!(cause, ClientError::InvalidServerHeader)
-                        } else {
-                            matches!(cause, ClientError::DbApiError(error) if error.status == status && error.description == "from a proxy")
-                        }
-                    },
+                    |cause| matches!(cause, ClientError::InvalidServerHeader),
                     &format!("{write:?} through {api:?} with {status} not from EventSourcingDB"),
                 );
             }
