@@ -1,7 +1,8 @@
 mod utils;
 
 use eventsourcingdb::request_options::{
-    Ordering, ReadEventMissingStrategy, ReadEventsOptions, ReadFromLatestEventOptions,
+    Bound, BoundType, Ordering, ReadEventMissingStrategy, ReadEventsOptions,
+    ReadFromLatestEventOptions,
 };
 use futures::TryStreamExt;
 use serde_json::json;
@@ -44,6 +45,42 @@ async fn make_read_call_with_event() {
         .expect("Failed to read events");
 
     assert_eq!(events, written);
+}
+
+#[tokio::test]
+async fn make_read_call_whose_stream_outlives_its_arguments() {
+    // The stream borrows neither the subject nor the options, so a function
+    // can make them from values of its own and return the stream.
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let written = client
+        .write_events(create_numbered_eventcandidates(3), vec![])
+        .await
+        .expect("Failed to write events");
+
+    let events_stream = {
+        let subject = String::from("/test");
+        let after = written[0].id().to_owned();
+        client
+            .read_events(
+                &subject,
+                Some(ReadEventsOptions {
+                    lower_bound: Some(Bound {
+                        bound_type: BoundType::Exclusive,
+                        id: &after,
+                    }),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("Failed to request events")
+    };
+    let events: Vec<_> = events_stream
+        .try_collect()
+        .await
+        .expect("Failed to read events");
+
+    assert_eq!(events, written[1..]);
 }
 
 #[tokio::test]

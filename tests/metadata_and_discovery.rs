@@ -68,6 +68,29 @@ async fn read_all_subjects() {
 }
 
 #[tokio::test]
+async fn read_subjects_with_a_stream_that_outlives_its_subject() {
+    // The stream does not borrow the subject, so a function can make it from
+    // a value of its own and return the stream.
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    write_events_to_nested_subjects(&client).await;
+
+    let subjects_stream = {
+        let subject = String::from("/test");
+        client
+            .read_subjects(&subject, ReadSubjectsOptions { recursive: false })
+            .await
+            .expect("Failed to read subjects")
+    };
+    let subjects: Vec<_> = subjects_stream
+        .try_collect()
+        .await
+        .expect("Failed to read subjects");
+
+    assert_eq!(subjects, ["/test"]);
+}
+
+#[tokio::test]
 async fn read_all_subjects_after_writing_events() {
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
@@ -206,6 +229,42 @@ async fn read_all_event_types() {
         }
         Err(err) => panic!("Failed to read event types: {err:?}"),
     }
+}
+
+#[tokio::test]
+async fn read_event_types_with_a_stream_that_outlives_its_client() {
+    // The stream does not borrow the client, so the client can go before the
+    // stream is read.
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string"
+            }
+        },
+        "required": ["id"]
+    });
+    client
+        .register_event_schema("io.eventsourcingdb.test", &schema)
+        .await
+        .expect("Failed to register event schema");
+
+    let event_types_stream = {
+        let client = container.get_client().await.unwrap();
+        client
+            .read_event_types()
+            .await
+            .expect("Failed to read event types")
+    };
+    let event_types: Vec<_> = event_types_stream
+        .try_collect()
+        .await
+        .expect("Failed to read event types");
+
+    assert_eq!(event_types.len(), 1);
+    assert_eq!(event_types[0].ty, "io.eventsourcingdb.test");
 }
 
 #[tokio::test]

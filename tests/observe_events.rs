@@ -1,6 +1,7 @@
 mod utils;
 use eventsourcingdb::request_options::{
-    ObserveEventMissingStrategy, ObserveEventsOptions, ObserveFromLatestEventOptions,
+    Bound, BoundType, ObserveEventMissingStrategy, ObserveEventsOptions,
+    ObserveFromLatestEventOptions,
 };
 use futures::stream::StreamExt;
 use serde_json::json;
@@ -29,6 +30,49 @@ async fn observe_existing_events() {
         .expect("Expected an event, but got an error");
 
     assert_eq!(vec![events], written);
+}
+
+#[tokio::test]
+async fn observe_events_with_a_stream_that_outlives_its_arguments() {
+    // The stream borrows neither the subject nor the options, so a function
+    // can make them from values of its own and return the stream.
+    let container = create_test_container().await;
+    let client = container.get_client().await.unwrap();
+    let written = client
+        .write_events(
+            vec![
+                create_test_eventcandidate("/test", json!({"value": 1})),
+                create_test_eventcandidate("/test", json!({"value": 2})),
+            ],
+            vec![],
+        )
+        .await
+        .expect("Unable to write events");
+
+    let mut events_stream = {
+        let subject = String::from("/test");
+        let after = written[0].id().to_owned();
+        client
+            .observe_events(
+                &subject,
+                Some(ObserveEventsOptions {
+                    lower_bound: Some(Bound {
+                        bound_type: BoundType::Exclusive,
+                        id: &after,
+                    }),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("Failed to observe events")
+    };
+    let event = events_stream
+        .next()
+        .await
+        .expect("Failed to read events")
+        .expect("Expected an event, but got an error");
+
+    assert_eq!(event, written[1]);
 }
 
 #[tokio::test]
