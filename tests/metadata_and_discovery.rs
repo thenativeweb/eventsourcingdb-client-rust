@@ -237,8 +237,17 @@ async fn read_event_types_with_a_stream_that_outlives_its_client() {
     // stream is read.
     let container = create_test_container().await;
     let client = container.get_client().await.unwrap();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string"
+            }
+        },
+        "required": ["id"]
+    });
     client
-        .register_event_schema("io.eventsourcingdb.test", &json!({"type": "object"}))
+        .register_event_schema("io.eventsourcingdb.test", &schema)
         .await
         .expect("Failed to register event schema");
 
