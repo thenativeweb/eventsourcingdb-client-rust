@@ -234,7 +234,7 @@ impl Client {
         &self,
         subject: &'a str,
         options: Option<request_options::ReadEventsOptions<'a>>,
-    ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
+    ) -> Result<impl Stream<Item = Result<Event, ClientError>> + use<>, ClientError> {
         match self.api_version().await? {
             RememberedApi::V1 => v1::read_events(&self.http, subject, options).await,
             RememberedApi::V2(remembered) => {
@@ -332,7 +332,7 @@ impl Client {
         &self,
         subject: &'a str,
         options: Option<request_options::ObserveEventsOptions<'a>>,
-    ) -> Result<impl Stream<Item = Result<Event, ClientError>>, ClientError> {
+    ) -> Result<impl Stream<Item = Result<Event, ClientError>> + use<>, ClientError> {
         match self.api_version().await? {
             RememberedApi::V1 => v1::observe_events(&self.http, subject, options).await,
             RememberedApi::V2(remembered) => {
@@ -469,7 +469,7 @@ impl Client {
         &self,
         subject: &str,
         options: request_options::ReadSubjectsOptions,
-    ) -> Result<impl Stream<Item = Result<String, ClientError>>, ClientError> {
+    ) -> Result<impl Stream<Item = Result<String, ClientError>> + use<>, ClientError> {
         match self.api_version().await? {
             RememberedApi::V1 => v1::read_subjects(&self.http, subject, options).await,
             RememberedApi::V2(remembered) => {
@@ -503,7 +503,7 @@ impl Client {
     /// This function will return an error if the request fails or if the URL is invalid.
     pub async fn read_event_types(
         &self,
-    ) -> Result<impl Stream<Item = Result<EventType, ClientError>>, ClientError> {
+    ) -> Result<impl Stream<Item = Result<EventType, ClientError>> + use<>, ClientError> {
         match self.api_version().await? {
             RememberedApi::V1 => v1::read_event_types(&self.http).await,
             RememberedApi::V2(remembered) => v2::read_event_types(&self.http, remembered).await,
@@ -595,7 +595,8 @@ impl Client {
     pub async fn run_eventql_query(
         &self,
         query: &str,
-    ) -> Result<impl Stream<Item = Result<serde_json::Value, ClientError>>, ClientError> {
+    ) -> Result<impl Stream<Item = Result<serde_json::Value, ClientError>> + use<>, ClientError>
+    {
         match self.api_version().await? {
             RememberedApi::V1 => v1::run_eventql_query(&self.http, query).await,
             RememberedApi::V2(remembered) => {
