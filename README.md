@@ -12,10 +12,11 @@ This client SDK includes support for [Testcontainers](https://testcontainers.com
 
 The client SDK requires Rust 1.88 or later, and its optional `polars` feature requires Rust 1.95 or later, because of `sysinfo`.
 
-Install the client SDK:
+Install the client SDK, and the `url` crate, since the client takes the URL of your EventSourcingDB instance as a `Url`, which the SDK does not re-export:
 
 ```shell
 cargo add eventsourcingdb
+cargo add url
 ```
 
 Import the package and create an instance by providing the URL of your EventSourcingDB instance and the API token to use:
@@ -404,7 +405,11 @@ println!("{}", df);
 
 The resulting DataFrame includes all event fields as columns: `event_id`, `time`, `source`, `subject`, `type`, `data`, `spec_version`, `data_content_type`, `predecessor_hash`, `hash`, `trace_parent`, `trace_state`, and `signature`.
 
-The `data` field is stored as a JSON string. Use Polars' JSON functions to extract values:
+The `data` field is stored as a JSON string. Use Polars' JSON functions to extract values. They need Polars itself as a dependency, in the version the SDK uses, with the features `lazy`, `strings`, and `extract_jsonpath`:
+
+```shell
+cargo add polars@0.55 --features lazy,strings,extract_jsonpath
+```
 
 ```rust
 use polars::prelude::*;
@@ -413,8 +418,8 @@ use polars::prelude::*;
 let result = df.lazy()
   .filter(col("type").eq(lit("io.eventsourcingdb.library.book-acquired")))
   .with_columns([
-    col("data").str().json_path_match("$.title")?.alias("title"),
-    col("data").str().json_path_match("$.author")?.alias("author"),
+    col("data").str().json_path_match(lit("$.title")).alias("title"),
+    col("data").str().json_path_match(lit("$.author")).alias("author"),
   ])
   .collect()?;
 
