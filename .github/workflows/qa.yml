@@ -24,7 +24,7 @@ jobs:
     - name: Clone repository
       uses: actions/checkout@v7.0.1
     - name: Use Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+      uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
       with:
         toolchain: stable
         components: clippy, rustfmt
@@ -52,7 +52,7 @@ jobs:
         test -n "$msrv"
         echo "MSRV=$msrv" >> "$GITHUB_ENV"
     - name: Use Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
+      uses: actions-rust-lang/setup-rust-toolchain@v2.0.1
       with:
         toolchain: ${{ env.MSRV }}, ${{ env.POLARS_RUST_VERSION }}
         cache: true
