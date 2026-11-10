@@ -20,7 +20,7 @@
 //! # use url::Url;
 //! // ...
 //!
-//! let base_url: Url = "localhost:3000".parse().unwrap();
+//! let base_url: Url = "http://localhost:3000".parse().unwrap();
 //! let api_token = "secret";
 //! let client = Client::new(base_url, api_token);
 //! ```

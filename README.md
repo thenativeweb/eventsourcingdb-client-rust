@@ -22,10 +22,11 @@ Import the package and create an instance by providing the URL of your EventSour
 
 ```rust
 use eventsourcingdb::client::Client;
+use url::Url;
 
 // ...
 
-let base_url: Url = "localhost:3000".parse().unwrap();
+let base_url: Url = "http://localhost:3000".parse().unwrap();
 let api_token = "secret";
 let client = Client::new(base_url, api_token);
 ```
@@ -247,7 +248,7 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsOptions {
       recursive: false,
-      ..Default::default(),
+      ..Default::default()
     }
   ))
   .await;
@@ -271,7 +272,7 @@ let result = client
   .read_events("/books/42", Some(
     ReadEventsOptions {
       recursive: true,
-      ..Default::default(),
+      ..Default::default()
     }
   ))
   .await;
@@ -289,7 +290,7 @@ let result = client
     ReadEventsOptions {
       recursive: false,
       order: Some(Ordering::Antichronological),
-      ..Default::default(),
+      ..Default::default()
     }
   ))
   .await;
@@ -316,7 +317,7 @@ let result = client
         bound_type: BoundType::Exclusive,
         id: "200",
       }),
-      ..Default::default(),
+      ..Default::default()
     }
   ))
   .await;
@@ -334,13 +335,13 @@ let result = client
     ReadEventsOptions {
       recursive: false,
       from_latest_event: Some(
-        FromLatestEventOptions {
+        ReadFromLatestEventOptions {
           subject: "/books/42",
           ty: "io.eventsourcingdb.library.book-borrowed",
           if_event_is_missing: ReadEventMissingStrategy::ReadEverything,
         }
-      )
-      ..Default::default(),
+      ),
+      ..Default::default()
     }
   ))
   .await;
@@ -460,10 +461,10 @@ let result = client
   .observe_events("/books/42", Some(
     ObserveEventsOptions {
       recursive: true,
-      ..Default::default(),
+      ..Default::default()
     }
   ))
-  .await
+  .await;
 ```
 
 This also allows you to observe *all* events ever written. To do so, provide `/` as the subject and set `recursive` to `true`, since all subjects are nested under the root subject.
@@ -483,10 +484,10 @@ let result = client
         bound_type: BoundType::Inclusive,
         id: "100",
       }),
-      ..Default::default(),
+      ..Default::default()
     }
   ))
-  .await
+  .await;
 ```
 
 #### Starting From the Latest Event of a Given Type
@@ -506,11 +507,11 @@ let result = client
           ty: "io.eventsourcingdb.library.book-borrowed",
           if_event_is_missing: ObserveEventMissingStrategy::ReadEverything,
         }
-      )
-      ..Default::default(),
+      ),
+      ..Default::default()
     }
   ))
-  .await
+  .await;
 ```
 
 *Note that `from_latest_event` and `lower_bound` can not be provided at the same time.*
