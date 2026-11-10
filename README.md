@@ -22,6 +22,7 @@ Import the package and create an instance by providing the URL of your EventSour
 
 ```rust
 use eventsourcingdb::client::Client;
+use url::Url;
 
 // ...
 
