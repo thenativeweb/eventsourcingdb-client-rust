@@ -12,10 +12,11 @@ This client SDK includes support for [Testcontainers](https://testcontainers.com
 
 The client SDK requires Rust 1.88 or later, and its optional `polars` feature requires Rust 1.95 or later, because of `sysinfo`.
 
-Install the client SDK:
+Install the client SDK, and the `url` crate, since the client takes the URL of your EventSourcingDB instance as a `Url`, which the SDK does not re-export:
 
 ```shell
 cargo add eventsourcingdb
+cargo add url
 ```
 
 Import the package and create an instance by providing the URL of your EventSourcingDB instance and the API token to use:
