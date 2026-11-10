@@ -28,6 +28,8 @@ macro_rules! codes {
 codes! {
     SUBJECT_MISSING = "subject-missing";
     SUBJECT_MALFORMED = "subject-malformed";
+    SUBJECT_TOO_LONG = "subject-too-long";
+    SUBJECT_TOO_DEEP = "subject-too-deep";
     ORDER_UNKNOWN = "order-unknown";
     EVENT_ID_MISSING = "event-id-missing";
     EVENT_ID_MALFORMED = "event-id-malformed";
@@ -57,6 +59,7 @@ codes! {
     EVENT_SCHEMA_MISSING = "event-schema-missing";
     EVENT_SCHEMA_MALFORMED = "event-schema-malformed";
     EVENT_SCHEMA_NOT_OBJECT = "event-schema-not-object";
+    EVENT_SCHEMA_TOO_COMPLEX = "event-schema-too-complex";
     EVENT_SCHEMA_ALREADY_REGISTERED = "event-schema-already-registered";
     LAST_AUDITED_EVENT_MISSING = "last-audited-event-missing";
     LAST_AUDITED_EVENT_MISMATCHED = "last-audited-event-mismatched";
@@ -76,10 +79,16 @@ codes! {
     BACKUP_INCREMENT_DISCONNECTED = "backup-increment-disconnected";
     BACKUP_FAILED = "backup-failed";
     BACKUP_UNREADABLE = "backup-unreadable";
+    BACKUP_AHEAD_OF_CLOCK = "backup-ahead-of-clock";
+    IMPORT_AHEAD_OF_CLOCK = "import-ahead-of-clock";
+    IMPORT_MALFORMED = "import-malformed";
+    IMPORT_UNREADABLE = "import-unreadable";
     EVENT_TOO_LARGE = "event-too-large";
     DATA_MALFORMED = "data-malformed";
     QUERY_MISSING = "query-missing";
     QUERY_MALFORMED = "query-malformed";
+    QUERY_TOO_DEEP = "query-too-deep";
+    QUERY_TOO_LONG = "query-too-long";
     QUERY_UNEVALUABLE = "query-unevaluable";
     QUERY_NOT_BOOLEAN = "query-not-boolean";
     PRECONDITION_VIOLATED = "precondition-violated";
@@ -90,15 +99,18 @@ codes! {
     STORE_FAILED = "store-failed";
     INDEXES_REBUILDING = "indexes-rebuilding";
     SERVER_SHUTTING_DOWN = "server-shutting-down";
+    FILE_UNREADABLE = "file-unreadable";
 }
 
 #[cfg(test)]
 mod tests {
     /// The slugs of the errors in the order in which the server lists them, in `cmd/server/api/error.go` of
-    /// EventSourcingDB, as of revision `36fa882`
+    /// EventSourcingDB, as of revision `63877b2`
     const SERVER_SLUGS: &[&str] = &[
         "subject-missing",
         "subject-malformed",
+        "subject-too-long",
+        "subject-too-deep",
         "order-unknown",
         "event-id-missing",
         "event-id-malformed",
@@ -128,6 +140,7 @@ mod tests {
         "event-schema-missing",
         "event-schema-malformed",
         "event-schema-not-object",
+        "event-schema-too-complex",
         "event-schema-already-registered",
         "last-audited-event-missing",
         "last-audited-event-mismatched",
@@ -147,10 +160,16 @@ mod tests {
         "backup-increment-disconnected",
         "backup-failed",
         "backup-unreadable",
+        "backup-ahead-of-clock",
+        "import-ahead-of-clock",
+        "import-malformed",
+        "import-unreadable",
         "event-too-large",
         "data-malformed",
         "query-missing",
         "query-malformed",
+        "query-too-deep",
+        "query-too-long",
         "query-unevaluable",
         "query-not-boolean",
         "precondition-violated",
@@ -161,6 +180,7 @@ mod tests {
         "store-failed",
         "indexes-rebuilding",
         "server-shutting-down",
+        "file-unreadable",
     ];
 
     #[test]
