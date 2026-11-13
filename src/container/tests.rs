@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::{Future, ready},
     sync::{
         Arc, Mutex,
@@ -316,6 +316,49 @@ fn the_startup_timeout_is_30_seconds_by_default() {
 #[should_panic(expected = "The startup timeout must be greater than zero")]
 fn a_startup_timeout_of_zero_panics() {
     let _builder = ContainerBuilder::default().with_startup_timeout(Duration::ZERO);
+}
+
+#[test]
+fn the_request_carries_the_labels_of_the_caller_and_the_label_of_the_attempt() {
+    let builder = ContainerBuilder::default()
+        .with_label("com.example.session", "1")
+        .with_label("com.example.suite", "integration")
+        .with_label("com.example.session", "2");
+
+    // Every attempt creates a container of its own, which carries the labels of the caller as well.
+    for attempt_id in ["first-attempt", "second-attempt"] {
+        assert_eq!(
+            builder.request(attempt_id, None).labels(),
+            &BTreeMap::from([
+                ("com.example.session".to_string(), "2".to_string()),
+                ("com.example.suite".to_string(), "integration".to_string()),
+                (START_LABEL.to_string(), attempt_id.to_string()),
+            ])
+        );
+    }
+}
+
+#[test]
+fn a_label_of_the_caller_does_not_replace_the_label_of_the_attempt() {
+    let request = ContainerBuilder::default()
+        .with_label(START_LABEL, "caller")
+        .request("attempt", None);
+    assert_eq!(request.labels()[START_LABEL], "attempt");
+}
+
+#[test]
+#[should_panic(
+    expected = "The key of a label must not be in the namespace org.testcontainers., which testcontainers reserves"
+)]
+fn a_label_in_the_namespace_of_testcontainers_panics() {
+    let _builder =
+        ContainerBuilder::default().with_label("org.testcontainers.managed-by", "caller");
+}
+
+#[test]
+#[should_panic(expected = "The value of a label must not be empty")]
+fn a_label_with_an_empty_value_panics() {
+    let _builder = ContainerBuilder::default().with_label("com.example.session", "");
 }
 
 #[test]
@@ -734,6 +777,33 @@ async fn pulling_the_image_does_not_count_toward_the_startup_timeout() {
     );
     assert_eq!(docker.attempt_ids().len(), 1);
     assert_eq!(left_behind, 0);
+}
+
+#[tokio::test]
+async fn a_started_container_carries_the_labels_of_the_caller() {
+    let session = format!("{:032x}", rand::random::<u128>());
+
+    let container = builder()
+        .with_label("com.example.session", &session)
+        .start()
+        .await
+        .expect("Failed to start the container");
+    let docker = docker_client_instance()
+        .await
+        .expect("Failed to connect to Docker");
+    let labels = docker
+        .inspect_container(container.instance.id(), None)
+        .await
+        .expect("Failed to inspect the container")
+        .config
+        .and_then(|config| config.labels)
+        .unwrap_or_default();
+    container
+        .stop()
+        .await
+        .expect("Failed to stop the container");
+
+    assert_eq!(labels.get("com.example.session"), Some(&session));
 }
 
 #[tokio::test]
