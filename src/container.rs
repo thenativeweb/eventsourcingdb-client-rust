@@ -43,7 +43,7 @@ use futures::StreamExt;
 use rand::prelude::ThreadRng;
 use reqwest::StatusCode;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::{Future, pending},
     pin::pin,
     sync::{Arc, OnceLock},
@@ -96,6 +96,8 @@ const LOG_TAIL_LINES: usize = 20;
 /// The label whose value names the attempt that created a container, so that the containers of an attempt that
 /// failed can be found and removed
 const START_LABEL: &str = "io.eventsourcingdb.container-start";
+/// The namespace of the keys of the labels that testcontainers reserves for itself, and sets or replaces
+const TESTCONTAINERS_LABEL_NAMESPACE: &str = "org.testcontainers.";
 
 #[cfg(test)]
 mod tests;
@@ -124,6 +126,7 @@ pub struct ContainerBuilder {
     api_token: String,
     signing_key: Option<SigningKey>,
     startup_timeout: Duration,
+    labels: BTreeMap<String, String>,
 }
 
 impl Default for ContainerBuilder {
@@ -135,6 +138,7 @@ impl Default for ContainerBuilder {
             api_token: "secret".to_string(),
             signing_key: None,
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            labels: BTreeMap::new(),
         }
     }
 }
@@ -191,6 +195,34 @@ impl ContainerBuilder {
             "The startup timeout must be greater than zero"
         );
         self.startup_timeout = startup_timeout;
+        self
+    }
+
+    /// Add a label to the container, for example to find the container in Docker, or to let
+    /// [Ryuk](https://github.com/testcontainers/moby-ryuk) remove it by its label.
+    ///
+    /// Each call adds a label, and a call with a key that was added before replaces its value. Every container that
+    /// starting the container creates carries the labels from the moment Docker creates it, including the containers
+    /// that replace one in which EventSourcingDB did not become reachable in time, see [`ContainerBuilder::start`].
+    ///
+    /// ```
+    /// # use eventsourcingdb::container::Container;
+    /// let builder = Container::builder()
+    ///     .with_label("com.example.session", "4f9a0c2e")
+    ///     .with_label("com.example.suite", "integration");
+    /// ```
+    ///
+    /// # Panics
+    /// Panics if the key is in the namespace `org.testcontainers.`, which testcontainers reserves for labels of its
+    /// own, or if the value is empty, since testcontainers leaves out labels with an empty value.
+    #[must_use]
+    pub fn with_label(mut self, key: &str, value: &str) -> Self {
+        assert!(
+            !key.starts_with(TESTCONTAINERS_LABEL_NAMESPACE),
+            "The key of a label must not be in the namespace {TESTCONTAINERS_LABEL_NAMESPACE}, which testcontainers reserves"
+        );
+        assert!(!value.is_empty(), "The value of a label must not be empty");
+        let _replaced = self.labels.insert(key.to_string(), value.to_string());
         self
     }
 
@@ -365,7 +397,8 @@ impl ContainerBuilder {
         }
     }
 
-    /// Returns the request for the container of the given attempt, which carries the label of the attempt.
+    /// Returns the request for the container of the given attempt, which carries the labels of the caller and the label
+    /// of the attempt.
     fn request(
         &self,
         attempt_id: &str,
@@ -384,8 +417,10 @@ impl ContainerBuilder {
         ];
         // The container is ready once EventSourcingDB answers, which wait_until_reachable waits for, instead of the
         // HTTP wait of testcontainers, which looks up the mapped port only once.
+        // The label of the attempt comes after the labels of the caller, so that none of them replaces it.
         let mut request = GenericImage::new(&self.image_name, &self.image_tag)
             .with_exposed_port(self.internal_port)
+            .with_labels(&self.labels)
             .with_label(START_LABEL, attempt_id);
         if let Some(signing_key_pem) = signing_key_pem {
             // if signing is enabled, we need to add the signing key to the command args
